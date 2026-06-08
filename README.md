@@ -1,36 +1,176 @@
-# Go2 低姿态控制 Web 界面
+# Go2 Height Control Web Console
 
-这是给 Go2 固件 `1.1.4` 准备的本地网页控制台。它不会替代底层控制脚本，而是通过后端启动 `go2_height_control_legacy_114/` 里的脚本，让操作更直观。
+这是一个面向 Unitree Go2 的低姿态控制功能包，基于 `unitree_webrtc_connect` 通过 WebRTC DataChannel 发送 Sport API 指令。
 
-## 功能
+它包含两套入口：
 
-- 在网页里修改机器人 IP、低姿态偏移、前进距离、速度和 Move 周期。
-- 一键切换到普通运动模式 `normal`。
-- 一键执行“降低高度 -> 前进约 2m -> 恢复高度”。
-- 一键运行 BodyHeight 诊断。
-- 一键停止并恢复正常高度。
-- 页面显示实时日志，方便给客户演示和排查问题。
-- 支持网页键盘遥控：`WASD` 为左摇杆，`IJKL` 为右摇杆，`Q/↑` 升高身体，`E/↓` 降低身体。
-- 支持在遥控区域用滑动条直接设置目标偏移。
-- 显示当前目标高度、反馈高度、速度、步态/模式和高度响应码。
+- `go2_height_control_ui/`：本地 Web 控制台，适合演示、调参和客户现场操作。
+- `go2_height_control_legacy_114/`：命令行脚本，适合诊断、自动低姿态前进和紧急恢复。
 
-## 适用范围
+## 固件兼容性
 
-这套界面默认针对：
+已验证的高度控制路径：
 
-- Go2 固件：`1.1.4`
-- WebRTC IP：`192.168.12.2`
-- WebRTC 端口：`9991`
-- BodyHeight API：`1013`
+```text
+Go2 固件 1.1.4
+WebRTC LocalSTA
+Sport API BodyHeight = 1013
+motion mode = normal
+```
 
-如果是 `1.1.7-1.1.11` 的 MCF 模式，之前测试过 `BodyHeight=1013` 会返回 `3203`，这套 Web 界面也不能绕过固件限制。
+版本说明：
 
-## 启动界面
+- `1.1.4`：公开 `BodyHeight=1013` 在普通 `normal` sport mode 下可用，本项目的低姿态控制和匍匐前进按这个版本实现。
+- `1.1.7` 到 `1.1.11`：通常运行在 `mcf` 运动模式。实测公开 WebRTC/DDS 接口里 `BodyHeight=1013` 返回 `3203` 或不生效，因此可以安装和运行诊断，但不能保证能通过本项目调节机身高度。
+- `1.1.11` 以下但不是 `1.1.4`：请先运行诊断脚本。如果 `BodyHeight` 响应码为 `0`，再继续测试；如果返回 `3203` 或其他非 `0`，说明当前固件/模式不支持这个公开接口。
+
+本项目不包含固件升级或降级工具，也不会绕过固件限制。固件切换有风险，应单独确认来源和流程。
+
+## 准备环境
+
+推荐使用 Ubuntu 20.04/22.04，Python 3.8 以上。
+
+安装基础工具：
+
+```bash
+sudo apt update
+sudo apt install -y git python3 python3-pip python3-venv netcat
+```
+
+如果系统里 `netcat` 包名不可用，可改装：
+
+```bash
+sudo apt install -y netcat-openbsd
+```
+
+建议使用虚拟环境：
+
+```bash
+python3 -m venv ~/go2-webrtc-venv
+source ~/go2-webrtc-venv/bin/activate
+python -m pip install --upgrade pip
+```
+
+## 安装 unitree_webrtc_connect
+
+本功能包依赖上游 `unitree_webrtc_connect` Python 包。先克隆并安装上游项目：
+
+```bash
+cd ~
+git clone https://github.com/legion1581/unitree_webrtc_connect.git
+cd unitree_webrtc_connect
+python -m pip install -e .
+```
+
+验证 Python 能导入：
+
+```bash
+python - <<'PY'
+from unitree_webrtc_connect.webrtc_driver import UnitreeWebRTCConnection
+from unitree_webrtc_connect.constants import RTC_TOPIC, SPORT_CMD
+print("unitree_webrtc_connect OK")
+print("BodyHeight api:", SPORT_CMD.get("BodyHeight"))
+PY
+```
+
+正常应看到：
+
+```text
+unitree_webrtc_connect OK
+BodyHeight api: 1013
+```
+
+## 安装本功能包
+
+克隆本仓库：
+
+```bash
+cd ~
+git clone https://github.com/Uoghluvm/go2-height-control.git
+cd go2-height-control
+```
+
+本仓库只放高度控制功能代码。运行时需要能导入刚才安装的 `unitree_webrtc_connect`。
+
+如果你使用虚拟环境，每次运行前先进入环境：
+
+```bash
+source ~/go2-webrtc-venv/bin/activate
+```
+
+## 连接 Go2
+
+本项目默认使用 LocalSTA 方式连接机器人，默认 IP 是：
+
+```text
+192.168.12.2
+```
+
+先确认电脑和 Go2 在同一网络内，然后检查 WebRTC 信令端口：
+
+```bash
+nc -vz 192.168.12.2 9991
+```
+
+成功时类似：
+
+```text
+Connection to 192.168.12.2 9991 port [tcp/*] succeeded!
+```
+
+如果你的 Go2 IP 不同，运行时用环境变量覆盖：
+
+```bash
+export UNITREE_ROBOT_IP=你的机器人IP
+```
+
+常见连接方式：
+
+- 电脑连接 Go2 Wi-Fi 或与 Go2 在同一局域网时，确认机器人的实际 IP 后使用 `UNITREE_ROBOT_IP`。
+- 如果你使用网线直连或路由器分配地址，先用路由器后台、`arp -a`、`ip neigh` 或 Unitree App 确认 IP。
+- 本项目脚本当前封装的是 `WebRTCConnectionMethod.LocalSTA`。如果你需要 AP 模式，需要在 `go2_height_control_legacy_114/common.py` 里改 `make_connection()` 的连接方式。
+
+## 第一次诊断
+
+先运行诊断，不要直接执行低姿态移动：
+
+```bash
+cd ~/go2-height-control
+source ~/go2-webrtc-venv/bin/activate
+source go2_height_control_legacy_114/config.env
+python go2_height_control_legacy_114/diagnose_go2.py
+```
+
+如果 IP 不同：
+
+```bash
+UNITREE_ROBOT_IP=192.168.x.x python go2_height_control_legacy_114/diagnose_go2.py
+```
+
+`1.1.4` 正常情况应看到类似：
+
+```text
+Motion mode: normal
+BalanceStand response code: 0
+Test BodyHeight response code: 0
+Restore BodyHeight response code: 0
+```
+
+如果看到：
+
+```text
+BodyHeight response code: 3203
+```
+
+通常表示当前固件或运动模式不支持公开 `BodyHeight=1013` 设置接口。`1.1.7-1.1.11` 的 MCF 模式常见这个结果。
+
+## 启动 Web 控制台
 
 在仓库根目录运行：
 
 ```bash
-cd /home/t/unitree_webrtc_connect
+cd ~/go2-height-control
+source ~/go2-webrtc-venv/bin/activate
 python go2_height_control_ui/backend.py
 ```
 
@@ -40,41 +180,87 @@ python go2_height_control_ui/backend.py
 http://127.0.0.1:8765
 ```
 
-如果需要让局域网内其他设备访问：
+如果需要让同一局域网里的其他设备访问：
 
 ```bash
 GO2_UI_HOST=0.0.0.0 python go2_height_control_ui/backend.py
 ```
 
-然后用控制电脑的 IP 访问 `http://控制电脑IP:8765`。
+然后在其他设备浏览器访问：
 
-## 推荐操作流程
-
-1. 电脑连接 Go2 Wi-Fi。
-2. 确认端口可用：
-
-```bash
-nc -vz 192.168.12.2 9991
+```text
+http://控制电脑IP:8765
 ```
 
-3. 启动 Web 后端：
+页面推荐流程：
+
+1. 填写或确认机器人 IP。
+2. 点击“诊断 BodyHeight”。
+3. 如果诊断成功，点击“切换普通运动模式”。
+4. 低姿态演示时，点击“降低高度并前进 2m”。
+5. 手动控制时，点击“启动键盘遥控”。
+6. 状态异常时，点击“停止并恢复高度”。
+
+## 命令行执行低姿态前进
+
+加载默认参数：
 
 ```bash
-python go2_height_control_ui/backend.py
+source go2_height_control_legacy_114/config.env
 ```
 
-4. 打开网页后先点“诊断 BodyHeight”。
-5. 点“切换普通运动模式”。
-6. 诊断成功后点“降低高度并前进 2m”。
-7. 如果机器人状态不对，点“停止并恢复高度”。
+默认参数：
 
-## 键盘遥控
+```text
+UNITREE_ROBOT_IP=192.168.12.2
+LOW_BODY_HEIGHT=-0.13
+NORMAL_BODY_HEIGHT=0.0
+CRAWL_DISTANCE_M=2.0
+CRAWL_SPEED_MPS=0.20
+MOVE_COMMAND_PERIOD_S=0.10
+REMOTE_FORWARD_LY=0.45
+ESTIMATED_SPEED_MPS=0.20
+REMOTE_PUBLISH_PERIOD_S=0.02
+```
 
-网页里点击“启动键盘遥控”后，后端会保持 WebRTC 长连接，并持续把键盘状态转换成 `rt/wirelesscontroller` 摇杆指令。
+执行 Sport `Move` 版本：
 
-启动键盘遥控时，后端会先尝试调用 motion switcher，把机器人切到 `normal` 普通运动模式。如果固件或当前状态不允许切换，日志里会显示响应码。
+```bash
+python go2_height_control_legacy_114/lower_and_crawl.py
+```
 
-键位如下：
+执行流程：
+
+```text
+连接机器人
+读取 motion mode
+必要时尝试切到 normal
+BalanceStand
+BodyHeight=-0.13
+持续重复发送 Move
+估算前进 2m
+StopMove
+BodyHeight=0.0
+断开连接
+```
+
+为什么要重复发送 `Move`：
+
+Go2 的 `Move` 是短时速度指令，通常会被看门狗自动停止。只发送一次只能移动很短时间，所以脚本按 `MOVE_COMMAND_PERIOD_S=0.10` 周期重复发送。
+
+如果想用模拟遥控器摇杆前推，而不是 Sport `Move`：
+
+```bash
+python go2_height_control_legacy_114/remote_forward_crawl.py
+```
+
+`REMOTE_FORWARD_LY` 是归一化摇杆量，不是 m/s。实际距离需要按地面、负载、电量和固件状态校准。
+
+## 键盘和滑动条
+
+Web 页面点击“启动键盘遥控”后，后端会保持 WebRTC 长连接，并持续把键盘状态转换成 `rt/wirelesscontroller` 摇杆指令。
+
+键位：
 
 ```text
 W / S：左摇杆前后
@@ -85,28 +271,19 @@ Q 或 ↑：身体升高一个步进
 E 或 ↓：身体降低一个步进
 ```
 
-下方“目标偏移滑动条”可以直接拖动到指定偏移值，默认范围是 `-0.13m` 到 `0.05m`，步进是 `0.01m`。滑动条只在“启动键盘遥控”后才会向机器人发送 `BodyHeight` 指令；拖动时按约 `20ms` 节流持续发送当前位置。未启动时只会提示先启动遥控。
-
-页面会实时显示：
+下方“目标偏移滑动条”可以直接拖动到指定偏移值，默认范围：
 
 ```text
-左摇杆位置
-右摇杆位置
-目标高度
-机器人反馈高度
-速度反馈
-步态/模式
-运动模式切换结果
-BodyHeight 响应码
+MIN_BODY_HEIGHT=-0.13
+MAX_BODY_HEIGHT=0.05
+HEIGHT_STEP_M=0.01
 ```
 
-如果浏览器窗口失去焦点，前端会自动清空按键状态；如果后端超过约 0.35 秒收不到键盘输入，也会自动发零摇杆，避免持续运动。
+滑动条只在“启动键盘遥控”后发送 `BodyHeight`。拖动时前端按约 `20ms` 节流发送当前位置。
 
-## 高度参数说明
+## 高度参数含义
 
-界面里的可输入高度不是官方文档里 `0.15-0.36m` 那种“机身绝对高度”。
-
-这里发送给 Go2 的是 Sport API `BodyHeight=1013` 的相对偏移量：
+这里发送给 Go2 的不是官方文档中 `0.15-0.36m` 的绝对机身高度，而是 Sport API `BodyHeight=1013` 的相对偏移量：
 
 ```text
 0.00：恢复普通站立高度
@@ -114,67 +291,102 @@ BodyHeight 响应码
 正数：在当前普通高度基础上抬高身体
 ```
 
-例如普通站立时实际高度大约是 `0.33m`，发送：
+例如普通站立实际高度约 `0.33m`，发送：
 
 ```text
 BodyHeight = -0.13
 ```
 
-可以理解为目标实际高度大约接近：
+可理解为目标实际高度大约：
 
 ```text
 0.33m - 0.13m = 0.20m
 ```
 
-按官方绝对高度 `0.15-0.36m` 理论换算，最低偏移大约可以到 `-0.18m`。但当前这台 Go2 实测 `BodyHeight` 目标低于 `-0.13m` 后不再继续降低，因此界面默认把最低偏移限制为 `-0.13m`；最高偏移按你的要求限制为 `0.05m`。
+理论上按绝对高度 `0.15-0.36m` 换算，最低偏移大约到 `-0.18m`。但当前实测目标低于 `-0.13m` 后不再继续降低，所以默认把最低偏移限制为 `-0.13m`，最高限制为 `0.05m`。
 
-所以本界面里的 `LOW_BODY_HEIGHT=-0.13`、`MIN_BODY_HEIGHT=-0.13` 这类值，表示“高度偏移量”，不是让机器人达到 `-0.13m` 的绝对高度。
+## 紧急恢复
 
-页面里的“实际高度反馈”来自 `sportmodestate`。如果 `GetBodyHeight` 返回 `3203`，说明当前固件不支持这个查询接口，后端会停止重复查询，避免日志刷屏。
+如果脚本中断、页面卡住或高度没有恢复，运行：
 
-## 默认参数
-
-后端默认参数如下：
-
-```text
-UNITREE_ROBOT_IP=192.168.12.2
-LOW_BODY_HEIGHT=-0.13
-NORMAL_BODY_HEIGHT=0.0
-CRAWL_DISTANCE_M=2.0
-CRAWL_SPEED_MPS=0.20
-MOVE_COMMAND_PERIOD_S=0.10
-REMOTE_FORWARD_LY=0.45
-REMOTE_PUBLISH_PERIOD_S=0.02
-KEYBOARD_AXIS_SCALE=0.55
-HEIGHT_STEP_M=0.01
-MIN_BODY_HEIGHT=-0.13
-MAX_BODY_HEIGHT=0.05
+```bash
+cd ~/go2-height-control
+source ~/go2-webrtc-venv/bin/activate
+source go2_height_control_legacy_114/config.env
+python go2_height_control_legacy_114/restore_height.py
 ```
 
-键盘调高度时，如果目标偏移已经到达 `MIN_BODY_HEIGHT` 或 `MAX_BODY_HEIGHT`，后端不会继续越界发送高度目标，页面会提示“不能再下降”或“不能再升高”。
+恢复脚本会发送：
 
-这些参数也可以直接在网页里修改。网页提交的参数只影响本次执行，不会改动源码。
+```text
+StopMove
+BodyHeight=0.0
+```
+
+## 常见问题
+
+`ModuleNotFoundError: No module named 'unitree_webrtc_connect'`
+
+说明上游包没有安装到当前 Python 环境。重新进入虚拟环境并安装：
+
+```bash
+source ~/go2-webrtc-venv/bin/activate
+cd ~/unitree_webrtc_connect
+python -m pip install -e .
+```
+
+`nc` 连不上 `9991`
+
+优先检查：
+
+- 电脑是否和 Go2 在同一网络。
+- `UNITREE_ROBOT_IP` 是否填的是机器人 IP，而不是电脑自己的 IP。
+- Go2 是否开机完成，WebRTC 服务是否启动。
+- 防火墙或代理是否影响本机到机器人局域网连接。
+
+`BodyHeight` 返回 `3203`
+
+通常是当前固件或运动模式不支持这个公开接口。`1.1.7-1.1.11` 的 MCF 模式常见。可以继续使用连接诊断和其他 WebRTC 功能，但本项目不能强行调节高度。
+
+机器人只动一下就停
+
+这是 `Move` 看门狗行为。请使用本项目的 `lower_and_crawl.py`，它会按 `MOVE_COMMAND_PERIOD_S` 重复发送速度指令。
+
+页面能打开但按钮无响应
+
+确认启动后端的终端是否有报错，并确认浏览器访问的是后端地址 `http://127.0.0.1:8765`，不是直接打开 HTML 文件。
+
+## 安全说明
+
+- 第一次测试不要站在机器人正前方。
+- 确保机器人周围至少 2 到 3 米空旷空间。
+- 不要在楼梯、坡道、湿滑地面、桌面边缘测试。
+- 第一次低姿态测试建议使用保守参数：
+
+```bash
+LOW_BODY_HEIGHT=-0.10 CRAWL_DISTANCE_M=1.0 python go2_height_control_legacy_114/lower_and_crawl.py
+```
+
+- 如果任何响应码不是 `0`，先停止测试并运行恢复脚本。
 
 ## 文件结构
 
 ```text
-go2_height_control_ui/
-├── backend.py
+go2-height-control/
 ├── README.md
-└── static/
-    ├── app.js
-    ├── index.html
-    └── styles.css
-```
-
-## 安全说明
-
-- 第一次测试时不要站在机器人正前方。
-- 确保机器人周围至少有 3 米空旷空间。
-- 执行低姿态前进前，先用“诊断 BodyHeight”确认固件确实支持调节高度。
-- 页面只是操作入口，真正的运动逻辑仍在 `go2_height_control_legacy_114/` 中。
-- 如果页面卡住，可以在终端按 `Ctrl+C` 退出后端，再运行：
-
-```bash
-python go2_height_control_legacy_114/restore_height.py
+├── go2_height_control_legacy_114/
+│   ├── README.md
+│   ├── common.py
+│   ├── config.env
+│   ├── diagnose_go2.py
+│   ├── lower_and_crawl.py
+│   ├── remote_forward_crawl.py
+│   └── restore_height.py
+└── go2_height_control_ui/
+    ├── README.md
+    ├── backend.py
+    └── static/
+        ├── app.js
+        ├── index.html
+        └── styles.css
 ```
