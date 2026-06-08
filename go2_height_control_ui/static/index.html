@@ -1,0 +1,176 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>Go2 低姿态控制台</title>
+    <link rel="stylesheet" href="/styles.css">
+  </head>
+  <body>
+    <main class="shell">
+      <section class="topbar">
+        <div>
+          <p class="eyebrow">Unitree Go2 / 固件 1.1.4</p>
+          <h1>低姿态匍匐控制台</h1>
+        </div>
+        <div class="status" id="statusPill">未连接</div>
+      </section>
+
+      <section class="grid">
+        <aside class="panel">
+          <div class="panel-title">
+            <h2>参数</h2>
+            <button class="ghost" id="resetParams">恢复默认</button>
+          </div>
+
+          <label>
+            机器人 IP
+            <input id="UNITREE_ROBOT_IP" autocomplete="off">
+          </label>
+
+          <div class="two">
+            <label>
+              低姿态偏移 m
+              <input id="LOW_BODY_HEIGHT" type="number" step="0.01">
+            </label>
+            <label>
+              恢复偏移 m
+              <input id="NORMAL_BODY_HEIGHT" type="number" step="0.01">
+            </label>
+          </div>
+
+          <div class="two">
+            <label>
+              前进距离 m
+              <input id="CRAWL_DISTANCE_M" type="number" step="0.1" min="0.1">
+            </label>
+            <label>
+              速度 m/s
+              <input id="CRAWL_SPEED_MPS" type="number" step="0.01" min="0.01">
+            </label>
+          </div>
+
+          <div class="two">
+            <label>
+              Move 周期 s
+              <input id="MOVE_COMMAND_PERIOD_S" type="number" step="0.01" min="0.02">
+            </label>
+            <label>
+              遥控前进量
+              <input id="REMOTE_FORWARD_LY" type="number" step="0.05" min="-1" max="1">
+            </label>
+          </div>
+
+          <div class="two">
+            <label>
+              遥控发布周期 s
+              <input id="REMOTE_PUBLISH_PERIOD_S" type="number" step="0.01" min="0.01">
+            </label>
+            <label>
+              键盘摇杆幅度
+              <input id="KEYBOARD_AXIS_SCALE" type="number" step="0.05" min="0.05" max="1.0">
+            </label>
+          </div>
+
+          <div class="two">
+            <label>
+              偏移步进 m
+              <input id="HEIGHT_STEP_M" type="number" step="0.01" min="0.01">
+            </label>
+            <label>
+              最低偏移 m
+              <input id="MIN_BODY_HEIGHT" type="number" step="0.01">
+            </label>
+          </div>
+
+          <label>
+            最高偏移 m
+            <input id="MAX_BODY_HEIGHT" type="number" step="0.01">
+          </label>
+        </aside>
+
+        <section class="panel controls">
+          <div class="panel-title">
+            <h2>操作</h2>
+            <span id="taskMeta">空闲</span>
+          </div>
+
+          <div class="actions">
+            <button data-action="normal-mode">切换普通运动模式</button>
+            <button class="primary" data-task="crawl">降低高度并前进 2m</button>
+            <button data-task="remote">遥控虚拟前进</button>
+            <button data-task="diagnose">诊断 BodyHeight</button>
+            <button class="danger" data-task="restore">停止并恢复高度</button>
+            <button class="ghost" id="stopTask">只停止当前任务</button>
+          </div>
+
+          <div class="safety">
+            <strong>使用前确认</strong>
+            <p>Go2 已经降级到 1.1.4，电脑连到 Go2 Wi-Fi，WebRTC 端口为 192.168.12.2:9991。测试时保持机器人周围空旷，随时准备使用遥控器或本页面恢复高度。</p>
+          </div>
+        </section>
+      </section>
+
+      <section class="panel keyboard-panel">
+          <div class="panel-title">
+            <h2>键盘遥控</h2>
+            <span id="keyboardState">未启动</span>
+          </div>
+          <div class="inline-alert" id="heightLimitAlert" hidden></div>
+
+          <div class="keyboard-grid">
+          <div class="stick-card">
+            <div class="stick-title">左摇杆 WASD</div>
+            <div class="stick" id="leftStick"><div></div></div>
+            <div class="axis-readout" id="leftAxis">lx 0.00 / ly 0.00</div>
+          </div>
+
+          <div class="stick-card">
+            <div class="stick-title">右摇杆 IJKL</div>
+            <div class="stick" id="rightStick"><div></div></div>
+            <div class="axis-readout" id="rightAxis">rx 0.00 / ry 0.00</div>
+          </div>
+
+          <div class="state-card">
+            <div class="state-row"><span>目标偏移</span><strong id="targetHeight">-</strong></div>
+            <div class="state-row"><span>实际高度反馈</span><strong id="measuredHeight">-</strong></div>
+            <div class="state-row"><span>速度反馈</span><strong id="velocityState">-</strong></div>
+            <div class="state-row"><span>步态/模式</span><strong id="modeState">-</strong></div>
+            <div class="state-row"><span>运动模式切换</span><strong id="motionModeState">-</strong></div>
+            <div class="state-row"><span>高度响应码</span><strong id="heightCode">-</strong></div>
+          </div>
+        </div>
+
+        <div class="keyboard-actions">
+          <button class="primary" id="startKeyboard">启动键盘遥控</button>
+          <button class="danger" id="stopKeyboard">停止键盘遥控</button>
+          <button id="heightUp">升高 Q / ↑</button>
+          <button id="heightDown">降低 E / ↓</button>
+        </div>
+
+        <div class="height-slider-card">
+          <div class="slider-header">
+            <span>目标偏移滑动条</span>
+            <strong id="heightSliderValue">0.00 m</strong>
+          </div>
+          <input id="heightSlider" type="range" min="-0.13" max="0.05" step="0.01" value="0.00">
+          <div class="slider-scale">
+            <span id="heightSliderMin">-0.13 m</span>
+            <span>0.00 m</span>
+            <span id="heightSliderMax">0.05 m</span>
+          </div>
+        </div>
+      </section>
+
+      <section class="panel log-panel">
+        <div class="panel-title">
+          <h2>实时日志</h2>
+          <button class="ghost" id="clearLog">清空显示</button>
+        </div>
+        <pre id="logs"></pre>
+      </section>
+    </main>
+
+    <script src="/app.js"></script>
+  </body>
+</html>
