@@ -11,6 +11,9 @@ const fields = [
   "HEIGHT_STEP_M",
   "MIN_BODY_HEIGHT",
   "MAX_BODY_HEIGHT",
+  "VIDEO_MULTICAST_IFACE",
+  "VIDEO_MULTICAST_ADDRESS",
+  "VIDEO_MULTICAST_PORT",
 ];
 
 let defaults = {};
@@ -323,8 +326,10 @@ function renderStatus(data) {
     document.body.dataset.defaultsLoaded = "true";
   }
 
-  statusPill.classList.toggle("running", data.running || data.keyboard?.running);
-  statusPill.textContent = data.keyboard?.running ? "键盘遥控中" : (data.running ? "任务运行中" : "空闲");
+  statusPill.classList.toggle("running", data.running || data.keyboard?.running || data.video?.running);
+  statusPill.textContent = data.keyboard?.running
+    ? "键盘遥控中"
+    : (data.running ? "任务运行中" : (data.video?.running ? "视频运行中" : "空闲"));
 
   const task = data.task || "无";
   const exitCode = data.exit_code === null || data.exit_code === undefined ? "-" : data.exit_code;

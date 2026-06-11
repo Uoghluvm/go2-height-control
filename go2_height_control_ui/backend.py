@@ -12,11 +12,7 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from urllib.parse import urlparse
 
-from aiortc import RTCPeerConnection, RTCSessionDescription
-from aiortc.mediastreams import MediaStreamError
 from unitree_webrtc_connect.constants import RTC_TOPIC, SPORT_CMD
-from unitree_webrtc_connect.unitree_auth import NoSdpAnswerError, RobotBusyError
-from unitree_webrtc_connect.webrtc_datachannel import WebRTCDataChannel
 from unitree_webrtc_connect.webrtc_driver import UnitreeWebRTCConnection, WebRTCConnectionMethod
 
 
@@ -40,6 +36,9 @@ DEFAULT_PARAMS = {
     "HEIGHT_STEP_M": "0.01",
     "MIN_BODY_HEIGHT": "-0.13",
     "MAX_BODY_HEIGHT": "0.05",
+    "VIDEO_MULTICAST_IFACE": "eth0",
+    "VIDEO_MULTICAST_ADDRESS": "230.1.1.1",
+    "VIDEO_MULTICAST_PORT": "1720",
 }
 
 TASKS = {
@@ -579,74 +578,13 @@ keyboard = KeyboardController(manager)
 motion_mode = MotionModeManager(manager)
 
 
-class LocalVideoChannel:
-    def __init__(self, pc, datachannel):
-        self.pc = pc
-        self.pc.addTransceiver("video", direction="recvonly")
-        self.datachannel = datachannel
-        self.track_callbacks = []
-
-    def switchVideoChannel(self, switch):
-        self.datachannel.switchVideoChannel(switch)
-
-    def add_track_callback(self, callback):
-        if callable(callback):
-            self.track_callbacks.append(callback)
-
-    async def track_handler(self, track):
-        for callback in self.track_callbacks:
-            await callback(track)
-
-
-class VideoEnabledConnection(UnitreeWebRTCConnection):
-    async def init_webrtc(self, turn_server_info=None, ip=None):
-        configuration = self.create_webrtc_configuration(turn_server_info)
-        self.pc = RTCPeerConnection(configuration)
-        self.datachannel = WebRTCDataChannel(self, self.pc)
-        self.video = LocalVideoChannel(self.pc, self.datachannel)
-
-        @self.pc.on("connectionstatechange")
-        async def on_connection_state_change():
-            self.isConnected = self.pc.connectionState == "connected"
-
-        @self.pc.on("track")
-        async def on_track(track):
-            try:
-                if track.kind == "video":
-                    await track.recv()
-                    await self.video.track_handler(track)
-            except MediaStreamError:
-                return
-
-        offer = await self.pc.createOffer()
-        await self.pc.setLocalDescription(offer)
-
-        if self.connectionMethod == WebRTCConnectionMethod.Remote:
-            peer_answer_json = await self.get_answer_from_remote_peer(self.pc, turn_server_info)
-        elif self.connectionMethod in (WebRTCConnectionMethod.LocalSTA, WebRTCConnectionMethod.LocalAP):
-            peer_answer_json = await self.get_answer_from_local_peer(self.pc, self.ip)
-        else:
-            peer_answer_json = None
-
-        if peer_answer_json is None:
-            raise NoSdpAnswerError()
-        peer_answer = json.loads(peer_answer_json)
-        if peer_answer["sdp"] == "reject":
-            raise RobotBusyError()
-
-        remote_sdp = RTCSessionDescription(sdp=peer_answer["sdp"], type=peer_answer["type"])
-        await self.pc.setRemoteDescription(remote_sdp)
-        await self.datachannel.wait_datachannel_open()
-
-
 class VideoStreamManager:
     def __init__(self, task_manager):
         self.task_manager = task_manager
         self.lock = threading.Lock()
         self.condition = threading.Condition(self.lock)
         self.thread = None
-        self.loop = None
-        self.conn = None
+        self.capture = None
         self.running = False
         self.connected = False
         self.stop_flag = False
@@ -699,10 +637,7 @@ class VideoStreamManager:
     def stop(self):
         with self.lock:
             self.stop_flag = True
-            loop = self.loop
             self.condition.notify_all()
-        if loop and loop.is_running():
-            loop.call_soon_threadsafe(lambda: None)
         self.task_manager.append_log("请求停止 Go2 视频流")
 
     def get_latest_jpeg(self, timeout=2.0, after_frame_at=None):
@@ -720,9 +655,7 @@ class VideoStreamManager:
 
     def _thread_main(self):
         try:
-            self.loop = asyncio.new_event_loop()
-            asyncio.set_event_loop(self.loop)
-            self.loop.run_until_complete(self._run())
+            self._run()
         except Exception as exc:
             with self.condition:
                 self.error = str(exc)
@@ -732,24 +665,52 @@ class VideoStreamManager:
             with self.condition:
                 self.running = False
                 self.connected = False
-                self.conn = None
-                self.loop = None
+                self.capture = None
                 self.condition.notify_all()
             self.task_manager.append_log("视频流已停止")
 
-    async def _run(self):
+    def _run(self):
         try:
             import cv2
         except ImportError as exc:
-            raise RuntimeError("缺少 opencv-python，请运行: python -m pip install opencv-python") from exc
+            raise RuntimeError("缺少 OpenCV，请运行: python -m pip install -r requirements.txt") from exc
 
         with self.lock:
-            ip = self.params["UNITREE_ROBOT_IP"]
+            iface = self.params["VIDEO_MULTICAST_IFACE"].strip() or "eth0"
+            address = self.params["VIDEO_MULTICAST_ADDRESS"].strip() or "230.1.1.1"
+            port = int(float(self.params["VIDEO_MULTICAST_PORT"]))
 
-        async def recv_camera_stream(track):
+        pipeline = (
+            f"udpsrc address={address} port={port} multicast-iface={iface} "
+            "! application/x-rtp, media=video, encoding-name=H264 "
+            "! rtph264depay ! h264parse ! avdec_h264 ! videoconvert "
+            "! video/x-raw,width=1280,height=720,format=BGR ! appsink drop=1 sync=false"
+        )
+        self.task_manager.append_log(f"视频流打开 H264 组播: {address}:{port} iface={iface}")
+
+        capture = cv2.VideoCapture(pipeline, cv2.CAP_GSTREAMER)
+        with self.lock:
+            self.capture = capture
+
+        if not capture.isOpened():
+            raise RuntimeError(
+                "无法打开 Go2 H264 组播视频。请确认网卡名正确、Go2 视频组播可达，"
+                "并且当前 OpenCV 支持 GStreamer。"
+            )
+
+        try:
+            with self.condition:
+                self.connected = True
+                self.condition.notify_all()
+
             while True:
-                frame = await track.recv()
-                image = frame.to_ndarray(format="bgr24")
+                with self.lock:
+                    if self.stop_flag:
+                        break
+                ok, image = capture.read()
+                if not ok:
+                    time.sleep(0.02)
+                    continue
                 ok, encoded = cv2.imencode(".jpg", image, [int(cv2.IMWRITE_JPEG_QUALITY), 82])
                 if not ok:
                     continue
@@ -762,33 +723,8 @@ class VideoStreamManager:
                     self.frame_count += 1
                     self.last_frame_at = time.time()
                     self.condition.notify_all()
-
-        conn = VideoEnabledConnection(WebRTCConnectionMethod.LocalSTA, ip=ip)
-        self.conn = conn
-        self.task_manager.append_log(f"视频流连接 Go2: {ip}")
-        await conn.connect()
-        conn.video.add_track_callback(recv_camera_stream)
-        conn.video.switchVideoChannel(True)
-
-        with self.condition:
-            self.connected = True
-            self.condition.notify_all()
-
-        try:
-            while True:
-                with self.lock:
-                    if self.stop_flag:
-                        break
-                await asyncio.sleep(0.1)
         finally:
-            try:
-                conn.video.switchVideoChannel(False)
-            except Exception:
-                pass
-            try:
-                await conn.disconnect()
-            except Exception:
-                pass
+            capture.release()
 
 
 video_stream = VideoStreamManager(manager)

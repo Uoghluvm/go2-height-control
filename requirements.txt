@@ -1,1 +1,5 @@
+# Fallback for Python environments without system cv2.
+# Go2 H264 multicast preview requires OpenCV built with GStreamer.
+# On Ubuntu, prefer apt packages documented in README.md:
+# python3-opencv + gstreamer1.0-* plugins.
 opencv-python

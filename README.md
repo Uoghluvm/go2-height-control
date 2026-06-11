@@ -51,11 +51,15 @@ source ~/go2-webrtc-venv/bin/activate
 python -m pip install --upgrade pip
 ```
 
-Web 页面的视频流预览需要 OpenCV 把 WebRTC 视频帧编码成 MJPEG：
+Web 页面的视频流预览使用 Go2 的 H.264 UDP 组播，需要 OpenCV 能通过 GStreamer 打开视频管线。Ubuntu 推荐安装系统 OpenCV 和 GStreamer 插件：
 
 ```bash
-python -m pip install -r requirements.txt
+sudo apt install -y python3-opencv gstreamer1.0-tools gstreamer1.0-plugins-base \
+  gstreamer1.0-plugins-good gstreamer1.0-plugins-bad gstreamer1.0-plugins-ugly \
+  gstreamer1.0-libav
 ```
+
+`requirements.txt` 里保留了 `opencv-python` 作为普通 Python 环境的兜底依赖，但 pip 版 OpenCV 常常不带 GStreamer。若页面提示无法打开 H.264 组播，请优先使用系统 `python3-opencv` 或自行安装带 GStreamer 的 OpenCV。
 
 ## 安装 unitree_webrtc_connect
 
@@ -95,7 +99,7 @@ git pull
 python -m pip install -e .
 ```
 
-说明：本项目的视频功能不再要求上游 `UnitreeWebRTCConnection` 自带 `conn.video` 属性。后端会为视频预览单独创建带 `video recvonly` transceiver 的 WebRTC 连接。
+说明：本项目的视频功能不使用上游 `UnitreeWebRTCConnection.video`。视频走 Go2 的 H.264 UDP 组播流，默认地址为 `230.1.1.1:1720`。
 
 ## 安装本功能包
 
@@ -221,27 +225,59 @@ http://控制电脑IP:8765
 
 ## 读取 Go2 视频流
 
-Web 控制台提供“视频流”区域。点击“开启视频”后，后端会建立一条独立的 WebRTC 连接：
+Web 控制台提供“视频流”区域。点击“开启视频”后，后端会按 Go2 L2 ROS2 项目的同一逻辑读取 H.264 组播：
 
 ```text
-Go2 video track -> Python backend -> JPEG/MJPEG -> browser img
+Go2 H264 RTP multicast 230.1.1.1:1720
+-> GStreamer/OpenCV decode
+-> Python backend JPEG/MJPEG
+-> browser img
 ```
 
-启动前确认当前 Python 环境已安装：
+启动前确认系统有 GStreamer 和带 GStreamer 支持的 OpenCV：
 
 ```bash
-python -m pip install -r requirements.txt
+sudo apt install -y python3-opencv gstreamer1.0-tools gstreamer1.0-plugins-base \
+  gstreamer1.0-plugins-good gstreamer1.0-plugins-bad gstreamer1.0-plugins-ugly \
+  gstreamer1.0-libav
 ```
 
 使用步骤：
 
 1. 启动 Web 控制台。
-2. 确认机器人 IP 正确。
-3. 点击“开启视频”。
-4. 页面显示分辨率、帧数和最近帧延迟。
-5. 不需要画面时点击“关闭视频”。
+2. 把“视频组播网卡”改成电脑连接 Go2 的网卡名，例如 `eth0`、`enp3s0`、`enx...`。
+3. 默认组播地址保持 `230.1.1.1`，端口保持 `1720`。
+4. 点击“开启视频”。
+5. 页面显示分辨率、帧数和最近帧延迟。
+6. 不需要画面时点击“关闭视频”。
 
-视频功能只读取 Go2 相机画面，不会发送运动命令。它使用的仍是 `unitree_webrtc_connect` 的 video channel；如果机器人固件、网络或上游驱动不提供 video track，页面会显示异常信息。
+可以先单独测试 GStreamer 管线：
+
+```bash
+gst-launch-1.0 udpsrc address=230.1.1.1 port=1720 multicast-iface=你的网卡名 \
+  ! application/x-rtp,media=video,encoding-name=H264 \
+  ! rtph264depay ! h264parse ! avdec_h264 ! videoconvert ! autovideosink
+```
+
+或用 OpenCV 测试：
+
+```bash
+python3 - <<'PY'
+import cv2
+iface = "eth0"  # 改成你的网卡名
+pipeline = (
+    f"udpsrc address=230.1.1.1 port=1720 multicast-iface={iface} "
+    "! application/x-rtp, media=video, encoding-name=H264 "
+    "! rtph264depay ! h264parse ! avdec_h264 ! videoconvert "
+    "! video/x-raw,width=1280,height=720,format=BGR ! appsink drop=1 sync=false"
+)
+cap = cv2.VideoCapture(pipeline, cv2.CAP_GSTREAMER)
+print("opened:", cap.isOpened())
+ok, frame = cap.read()
+print("first frame:", ok, None if not ok else frame.shape)
+PY
+```
+视频功能只读取 Go2 相机 H.264 组播画面，不会发送运动命令。
 
 ## 命令行执行低姿态前进
 
@@ -263,6 +299,9 @@ MOVE_COMMAND_PERIOD_S=0.10
 REMOTE_FORWARD_LY=0.45
 ESTIMATED_SPEED_MPS=0.20
 REMOTE_PUBLISH_PERIOD_S=0.02
+VIDEO_MULTICAST_IFACE=eth0
+VIDEO_MULTICAST_ADDRESS=230.1.1.1
+VIDEO_MULTICAST_PORT=1720
 ```
 
 执行 Sport `Move` 版本：
@@ -377,14 +416,19 @@ cd ~/unitree_webrtc_connect
 python -m pip install -e .
 ```
 
-`缺少 opencv-python`
+`无法打开 Go2 H264 组播视频`
 
-视频流需要 OpenCV 编码 JPEG。进入同一个虚拟环境后安装：
+优先检查：
+
+- “视频组播网卡”是否填的是连接 Go2 的真实网卡名。用 `ip -br addr` 查看。
+- 是否能用上面的 `gst-launch-1.0` 命令看到视频。
+- 当前 OpenCV 是否支持 GStreamer。可以运行：
 
 ```bash
-source ~/go2-webrtc-venv/bin/activate
-cd ~/go2-height-control
-python -m pip install -r requirements.txt
+python3 - <<'PY'
+import cv2
+print("GStreamer" in cv2.getBuildInformation())
+PY
 ```
 
 视频画面不出现
@@ -392,9 +436,8 @@ python -m pip install -r requirements.txt
 优先检查：
 
 - 是否点击了“开启视频”。
-- `UNITREE_ROBOT_IP` 是否正确。
-- 当前 Python 环境是否能正常导入 `unitree_webrtc_connect`，并且上游 Go2 WebRTC 基础连接是否可用。
-- `unitree_webrtc_connect` 的 Go2 video 示例在同一环境下是否能收到画面。
+- 视频组播网卡是否正确。
+- Go2 是否真的在当前网络发出 `230.1.1.1:1720` H.264 组播。
 - 网络是否稳定；视频比普通 Sport API 更依赖带宽和丢包情况。
 
 `nc` 连不上 `9991`

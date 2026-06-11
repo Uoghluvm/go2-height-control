@@ -13,7 +13,7 @@
 - 支持网页键盘遥控：`WASD` 为左摇杆，`IJKL` 为右摇杆，`Q/↑` 升高身体，`E/↓` 降低身体。
 - 支持在遥控区域用滑动条直接设置目标偏移。
 - 显示当前目标高度、反馈高度、速度、步态/模式和高度响应码。
-- 支持读取 Go2 WebRTC 视频流，在网页中显示相机画面。
+- 支持读取 Go2 H.264 UDP 组播视频流，在网页中显示相机画面。
 
 ## 适用范围
 
@@ -28,10 +28,12 @@
 
 ## 启动界面
 
-如果需要使用视频流，先在当前 Python 环境安装 OpenCV：
+如果需要使用视频流，先安装 GStreamer 和带 GStreamer 支持的 OpenCV：
 
 ```bash
-python -m pip install -r requirements.txt
+sudo apt install -y python3-opencv gstreamer1.0-tools gstreamer1.0-plugins-base \
+  gstreamer1.0-plugins-good gstreamer1.0-plugins-bad gstreamer1.0-plugins-ugly \
+  gstreamer1.0-libav
 ```
 
 在仓库根目录运行：
@@ -111,50 +113,40 @@ BodyHeight 响应码
 
 ## 视频流
 
-页面里的“视频流”区域用于读取 Go2 相机画面。点击“开启视频”后，后端会建立独立 WebRTC 连接，接收 video track，再编码为 MJPEG 给浏览器显示。
+页面里的“视频流”区域用于读取 Go2 相机画面。点击“开启视频”后，后端会打开 Go2 H.264 UDP 组播流，解码后再编码为 MJPEG 给浏览器显示。
 
 ```text
-Go2 video track -> Python backend -> JPEG/MJPEG -> browser img
+Go2 H264 RTP multicast 230.1.1.1:1720
+-> GStreamer/OpenCV decode
+-> Python backend JPEG/MJPEG
+-> browser img
 ```
 
 使用前确认：
 
 ```bash
-python -m pip install -r requirements.txt
+gst-launch-1.0 --version
 ```
 
 操作流程：
 
-1. 确认机器人 IP 正确。
-2. 点击“开启视频”。
+1. 确认“视频组播网卡”是电脑连接 Go2 的网卡名，例如 `eth0`、`enp3s0`、`enx...`。
+2. 保持默认组播地址 `230.1.1.1` 和端口 `1720`。
+3. 点击“开启视频”。
 3. 页面会显示画面、分辨率、帧数和最近帧延迟。
 4. 不需要画面时点击“关闭视频”。
 
-视频功能只读取相机画面，不会发送运动命令。如果页面提示缺少 `opencv-python`，或一直没有画面，先确认上游 `unitree_webrtc_connect` 的 Go2 video 示例能在同一 Python 环境下正常运行。
+视频功能只读取相机画面，不会发送运动命令。它不使用 `unitree_webrtc_connect` 的 `conn.video`，而是使用和 `go2_l2_ros2_humble` 中 `go2_h264_repub` 相同的 H.264 组播管线。
 
-如果报错：
-
-```text
-UnitreeWebRTCConnection object has no attribute 'video'
-```
-
-先更新本仓库。新版本已经不再依赖上游 `conn.video` 属性：
+可单独测试管线：
 
 ```bash
-cd ~/go2-height-control
-git pull
+gst-launch-1.0 udpsrc address=230.1.1.1 port=1720 multicast-iface=你的网卡名 \
+  ! application/x-rtp,media=video,encoding-name=H264 \
+  ! rtph264depay ! h264parse ! avdec_h264 ! videoconvert ! autovideosink
 ```
 
-同时建议更新上游 WebRTC 基础依赖：
-
-```bash
-source ~/go2-webrtc-venv/bin/activate
-cd ~/unitree_webrtc_connect
-git pull
-python -m pip install -e .
-```
-
-说明：上游 `driver creates video: False` 不再是问题，本项目后端会为视频预览单独创建带 `video recvonly` transceiver 的 WebRTC 连接。
+如果页面提示无法打开视频，通常是网卡名不对，或者当前 OpenCV 不支持 GStreamer。
 
 ## 高度参数说明
 
@@ -203,6 +195,9 @@ KEYBOARD_AXIS_SCALE=0.55
 HEIGHT_STEP_M=0.01
 MIN_BODY_HEIGHT=-0.13
 MAX_BODY_HEIGHT=0.05
+VIDEO_MULTICAST_IFACE=eth0
+VIDEO_MULTICAST_ADDRESS=230.1.1.1
+VIDEO_MULTICAST_PORT=1720
 ```
 
 键盘调高度时，如果目标偏移已经到达 `MIN_BODY_HEIGHT` 或 `MAX_BODY_HEIGHT`，后端不会继续越界发送高度目标，页面会提示“不能再下降”或“不能再升高”。
