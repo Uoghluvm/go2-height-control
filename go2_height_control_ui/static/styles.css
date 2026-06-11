@@ -212,6 +212,61 @@ button:disabled {
   margin-top: 16px;
 }
 
+.video-panel {
+  margin-top: 16px;
+}
+
+.video-actions {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(150px, 1fr));
+  gap: 12px;
+  margin-bottom: 14px;
+}
+
+.video-frame {
+  position: relative;
+  width: 100%;
+  aspect-ratio: 16 / 9;
+  min-height: 260px;
+  overflow: hidden;
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  background: #0f172a;
+}
+
+.video-frame img {
+  display: none;
+  width: 100%;
+  height: 100%;
+  object-fit: contain;
+}
+
+.video-frame.streaming img {
+  display: block;
+}
+
+.video-frame.streaming .video-placeholder {
+  display: none;
+}
+
+.video-placeholder {
+  position: absolute;
+  inset: 0;
+  display: grid;
+  place-items: center;
+  color: #cbd5e1;
+  font-size: 14px;
+}
+
+.video-meta {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 14px;
+  margin-top: 10px;
+  color: var(--muted);
+  font-size: 13px;
+}
+
 .keyboard-grid {
   display: grid;
   grid-template-columns: 220px 220px 1fr;
@@ -366,10 +421,11 @@ pre {
 
   .topbar,
   .grid,
-  .actions,
-  .two,
-  .keyboard-grid,
-  .keyboard-actions {
+    .actions,
+    .two,
+    .keyboard-grid,
+    .keyboard-actions,
+    .video-actions {
     grid-template-columns: 1fr;
   }
 

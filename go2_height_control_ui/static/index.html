@@ -162,6 +162,29 @@
         </div>
       </section>
 
+      <section class="panel video-panel">
+        <div class="panel-title">
+          <h2>视频流</h2>
+          <span id="videoState">未启动</span>
+        </div>
+
+        <div class="video-actions">
+          <button class="primary" id="startVideo">开启视频</button>
+          <button class="danger" id="stopVideo">关闭视频</button>
+        </div>
+
+        <div class="video-frame">
+          <img id="videoStream" alt="Go2 video stream">
+          <div class="video-placeholder" id="videoPlaceholder">开启视频后显示 Go2 相机画面</div>
+        </div>
+
+        <div class="video-meta">
+          <span id="videoResolution">分辨率 -</span>
+          <span id="videoFrames">帧数 -</span>
+          <span id="videoAge">延迟 -</span>
+        </div>
+      </section>
+
       <section class="panel log-panel">
         <div class="panel-title">
           <h2>实时日志</h2>

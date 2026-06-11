@@ -13,6 +13,7 @@
 - 支持网页键盘遥控：`WASD` 为左摇杆，`IJKL` 为右摇杆，`Q/↑` 升高身体，`E/↓` 降低身体。
 - 支持在遥控区域用滑动条直接设置目标偏移。
 - 显示当前目标高度、反馈高度、速度、步态/模式和高度响应码。
+- 支持读取 Go2 WebRTC 视频流，在网页中显示相机画面。
 
 ## 适用范围
 
@@ -27,10 +28,16 @@
 
 ## 启动界面
 
+如果需要使用视频流，先在当前 Python 环境安装 OpenCV：
+
+```bash
+python -m pip install opencv-python
+```
+
 在仓库根目录运行：
 
 ```bash
-cd /home/t/unitree_webrtc_connect
+cd ~/go2-height-control
 python go2_height_control_ui/backend.py
 ```
 
@@ -101,6 +108,29 @@ BodyHeight 响应码
 ```
 
 如果浏览器窗口失去焦点，前端会自动清空按键状态；如果后端超过约 0.35 秒收不到键盘输入，也会自动发零摇杆，避免持续运动。
+
+## 视频流
+
+页面里的“视频流”区域用于读取 Go2 相机画面。点击“开启视频”后，后端会建立独立 WebRTC 连接，接收 video track，再编码为 MJPEG 给浏览器显示。
+
+```text
+Go2 video track -> Python backend -> JPEG/MJPEG -> browser img
+```
+
+使用前确认：
+
+```bash
+python -m pip install opencv-python
+```
+
+操作流程：
+
+1. 确认机器人 IP 正确。
+2. 点击“开启视频”。
+3. 页面会显示画面、分辨率、帧数和最近帧延迟。
+4. 不需要画面时点击“关闭视频”。
+
+视频功能只读取相机画面，不会发送运动命令。如果页面提示缺少 `opencv-python`，或一直没有画面，先确认上游 `unitree_webrtc_connect` 的 Go2 video 示例能在同一 Python 环境下正常运行。
 
 ## 高度参数说明
 

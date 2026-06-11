@@ -575,6 +575,161 @@ keyboard = KeyboardController(manager)
 motion_mode = MotionModeManager(manager)
 
 
+class VideoStreamManager:
+    def __init__(self, task_manager):
+        self.task_manager = task_manager
+        self.lock = threading.Lock()
+        self.condition = threading.Condition(self.lock)
+        self.thread = None
+        self.loop = None
+        self.conn = None
+        self.running = False
+        self.connected = False
+        self.stop_flag = False
+        self.error = None
+        self.started_at = None
+        self.last_frame_at = None
+        self.frame_count = 0
+        self.width = None
+        self.height = None
+        self.latest_jpeg = None
+        self.params = DEFAULT_PARAMS.copy()
+
+    def snapshot(self):
+        with self.lock:
+            age = None
+            if self.last_frame_at is not None:
+                age = round(time.time() - self.last_frame_at, 2)
+            return {
+                "running": self.running,
+                "connected": self.connected,
+                "error": self.error,
+                "started_at": self.started_at,
+                "last_frame_at": self.last_frame_at,
+                "frame_age": age,
+                "frame_count": self.frame_count,
+                "width": self.width,
+                "height": self.height,
+            }
+
+    def start(self, params):
+        with self.lock:
+            if self.running:
+                raise RuntimeError("视频流已经在运行")
+            self.params = {key: str(params.get(key, value)) for key, value in DEFAULT_PARAMS.items()}
+            self.running = True
+            self.connected = False
+            self.stop_flag = False
+            self.error = None
+            self.started_at = time.time()
+            self.last_frame_at = None
+            self.frame_count = 0
+            self.width = None
+            self.height = None
+            self.latest_jpeg = None
+
+        self.task_manager.append_log("启动 Go2 视频流")
+        self.thread = threading.Thread(target=self._thread_main, daemon=True)
+        self.thread.start()
+
+    def stop(self):
+        with self.lock:
+            self.stop_flag = True
+            loop = self.loop
+            self.condition.notify_all()
+        if loop and loop.is_running():
+            loop.call_soon_threadsafe(lambda: None)
+        self.task_manager.append_log("请求停止 Go2 视频流")
+
+    def get_latest_jpeg(self, timeout=2.0, after_frame_at=None):
+        deadline = time.time() + timeout
+        with self.condition:
+            while self.running and time.time() < deadline:
+                has_frame = self.latest_jpeg is not None
+                is_new = after_frame_at is None or self.last_frame_at != after_frame_at
+                if has_frame and is_new:
+                    return self.latest_jpeg, self.last_frame_at
+                self.condition.wait(timeout=max(0.05, deadline - time.time()))
+            if self.latest_jpeg is not None and after_frame_at is None:
+                return self.latest_jpeg, self.last_frame_at
+            return None, after_frame_at
+
+    def _thread_main(self):
+        try:
+            self.loop = asyncio.new_event_loop()
+            asyncio.set_event_loop(self.loop)
+            self.loop.run_until_complete(self._run())
+        except Exception as exc:
+            with self.condition:
+                self.error = str(exc)
+                self.condition.notify_all()
+            self.task_manager.append_log(f"视频流异常: {exc}")
+        finally:
+            with self.condition:
+                self.running = False
+                self.connected = False
+                self.conn = None
+                self.loop = None
+                self.condition.notify_all()
+            self.task_manager.append_log("视频流已停止")
+
+    async def _run(self):
+        try:
+            import cv2
+        except ImportError as exc:
+            raise RuntimeError("缺少 opencv-python，请运行: python -m pip install opencv-python") from exc
+
+        with self.lock:
+            ip = self.params["UNITREE_ROBOT_IP"]
+
+        async def recv_camera_stream(track):
+            while True:
+                frame = await track.recv()
+                image = frame.to_ndarray(format="bgr24")
+                ok, encoded = cv2.imencode(".jpg", image, [int(cv2.IMWRITE_JPEG_QUALITY), 82])
+                if not ok:
+                    continue
+                jpeg = encoded.tobytes()
+                height, width = image.shape[:2]
+                with self.condition:
+                    self.latest_jpeg = jpeg
+                    self.width = int(width)
+                    self.height = int(height)
+                    self.frame_count += 1
+                    self.last_frame_at = time.time()
+                    self.condition.notify_all()
+
+        conn = UnitreeWebRTCConnection(WebRTCConnectionMethod.LocalSTA, ip=ip)
+        self.conn = conn
+        conn.video.add_track_callback(recv_camera_stream)
+        self.task_manager.append_log(f"视频流连接 Go2: {ip}")
+        await conn.connect()
+        conn.video.switchVideoChannel(True)
+
+        with self.condition:
+            self.connected = True
+            self.condition.notify_all()
+
+        try:
+            while True:
+                with self.lock:
+                    if self.stop_flag:
+                        break
+                await asyncio.sleep(0.1)
+        finally:
+            try:
+                conn.video.switchVideoChannel(False)
+            except Exception:
+                pass
+            try:
+                await conn.disconnect()
+            except Exception:
+                pass
+
+
+video_stream = VideoStreamManager(manager)
+
+
 class Handler(BaseHTTPRequestHandler):
     server_version = "Go2HeightControlUI/1.0"
 
@@ -587,7 +742,12 @@ class Handler(BaseHTTPRequestHandler):
             data = manager.snapshot()
             data["keyboard"] = keyboard.snapshot()
             data["motion_mode"] = motion_mode.snapshot()
+            data["video"] = video_stream.snapshot()
             self.write_json(data)
+            return
+
+        if parsed.path == "/api/video/stream":
+            self.write_mjpeg_stream()
             return
 
         path = parsed.path
@@ -618,6 +778,7 @@ class Handler(BaseHTTPRequestHandler):
             if parsed.path == "/api/stop":
                 manager.stop_current()
                 keyboard.stop()
+                video_stream.stop()
                 self.write_json({"ok": True})
                 return
 
@@ -654,6 +815,16 @@ class Handler(BaseHTTPRequestHandler):
                 self.write_json({"ok": True})
                 return
 
+            if parsed.path == "/api/video/start":
+                video_stream.start(payload.get("params", {}))
+                self.write_json({"ok": True})
+                return
+
+            if parsed.path == "/api/video/stop":
+                video_stream.stop()
+                self.write_json({"ok": True})
+                return
+
             self.send_error(HTTPStatus.NOT_FOUND)
         except Exception as exc:
             self.write_json({"ok": False, "error": str(exc)}, HTTPStatus.BAD_REQUEST)
@@ -672,6 +843,31 @@ class Handler(BaseHTTPRequestHandler):
         self.end_headers()
         self.wfile.write(body)
 
+    def write_mjpeg_stream(self):
+        boundary = "go2frame"
+        self.send_response(HTTPStatus.OK)
+        self.send_header("Content-Type", f"multipart/x-mixed-replace; boundary={boundary}")
+        self.send_header("Cache-Control", "no-store, no-cache, must-revalidate, max-age=0")
+        self.send_header("Pragma", "no-cache")
+        self.end_headers()
+
+        try:
+            last_frame_at = None
+            while True:
+                frame, last_frame_at = video_stream.get_latest_jpeg(timeout=3.0, after_frame_at=last_frame_at)
+                if frame is None:
+                    if not video_stream.snapshot()["running"]:
+                        break
+                    continue
+                self.wfile.write(f"--{boundary}\r\n".encode("ascii"))
+                self.wfile.write(b"Content-Type: image/jpeg\r\n")
+                self.wfile.write(f"Content-Length: {len(frame)}\r\n\r\n".encode("ascii"))
+                self.wfile.write(frame)
+                self.wfile.write(b"\r\n")
+                self.wfile.flush()
+        except (BrokenPipeError, ConnectionResetError):
+            return
+
 
 def main():
     if not LEGACY_DIR.exists():
@@ -685,6 +881,7 @@ def main():
     except KeyboardInterrupt:
         manager.stop_current()
         keyboard.stop()
+        video_stream.stop()
         print("\n服务已退出")
 
 

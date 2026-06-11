@@ -51,6 +51,12 @@ source ~/go2-webrtc-venv/bin/activate
 python -m pip install --upgrade pip
 ```
 
+Web 页面的视频流预览需要 OpenCV 把 WebRTC 视频帧编码成 MJPEG：
+
+```bash
+python -m pip install opencv-python
+```
+
 ## 安装 unitree_webrtc_connect
 
 本功能包依赖上游 `unitree_webrtc_connect` Python 包。先克隆并安装上游项目：
@@ -199,7 +205,32 @@ http://控制电脑IP:8765
 3. 如果诊断成功，点击“切换普通运动模式”。
 4. 低姿态演示时，点击“降低高度并前进 2m”。
 5. 手动控制时，点击“启动键盘遥控”。
-6. 状态异常时，点击“停止并恢复高度”。
+6. 需要查看相机画面时，点击“开启视频”。
+7. 状态异常时，点击“停止并恢复高度”。
+
+## 读取 Go2 视频流
+
+Web 控制台提供“视频流”区域。点击“开启视频”后，后端会建立一条独立的 WebRTC 连接：
+
+```text
+Go2 video track -> Python backend -> JPEG/MJPEG -> browser img
+```
+
+启动前确认当前 Python 环境已安装：
+
+```bash
+python -m pip install opencv-python
+```
+
+使用步骤：
+
+1. 启动 Web 控制台。
+2. 确认机器人 IP 正确。
+3. 点击“开启视频”。
+4. 页面显示分辨率、帧数和最近帧延迟。
+5. 不需要画面时点击“关闭视频”。
+
+视频功能只读取 Go2 相机画面，不会发送运动命令。它使用的仍是 `unitree_webrtc_connect` 的 video channel；如果机器人固件、网络或上游驱动不提供 video track，页面会显示异常信息。
 
 ## 命令行执行低姿态前进
 
@@ -334,6 +365,24 @@ source ~/go2-webrtc-venv/bin/activate
 cd ~/unitree_webrtc_connect
 python -m pip install -e .
 ```
+
+`缺少 opencv-python`
+
+视频流需要 OpenCV 编码 JPEG。进入同一个虚拟环境后安装：
+
+```bash
+source ~/go2-webrtc-venv/bin/activate
+python -m pip install opencv-python
+```
+
+视频画面不出现
+
+优先检查：
+
+- 是否点击了“开启视频”。
+- `UNITREE_ROBOT_IP` 是否正确。
+- `unitree_webrtc_connect` 的 Go2 video 示例在同一环境下是否能收到画面。
+- 网络是否稳定；视频比普通 Sport API 更依赖带宽和丢包情况。
 
 `nc` 连不上 `9991`
 

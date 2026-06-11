@@ -37,6 +37,12 @@ const heightSlider = document.querySelector("#heightSlider");
 const heightSliderValue = document.querySelector("#heightSliderValue");
 const heightSliderMin = document.querySelector("#heightSliderMin");
 const heightSliderMax = document.querySelector("#heightSliderMax");
+const videoState = document.querySelector("#videoState");
+const videoFrame = document.querySelector(".video-frame");
+const videoStream = document.querySelector("#videoStream");
+const videoResolution = document.querySelector("#videoResolution");
+const videoFrames = document.querySelector("#videoFrames");
+const videoAge = document.querySelector("#videoAge");
 let heightSliderTouched = false;
 let heightSliderTimer = null;
 let heightSliderLastSentAt = 0;
@@ -218,6 +224,33 @@ async function switchNormalMode() {
   }
 }
 
+async function startVideo() {
+  setBusy(true);
+  try {
+    await postJson("/api/video/start", { params: collectParams() });
+    videoStream.src = `/api/video/stream?t=${Date.now()}`;
+  } catch (error) {
+    alert(error.message);
+  } finally {
+    setBusy(false);
+    await refreshStatus();
+  }
+}
+
+async function stopVideo() {
+  setBusy(true);
+  try {
+    await postJson("/api/video/stop", {});
+    videoStream.removeAttribute("src");
+    videoFrame.classList.remove("streaming");
+  } catch (error) {
+    alert(error.message);
+  } finally {
+    setBusy(false);
+    await refreshStatus();
+  }
+}
+
 function setBusy(isBusy) {
   for (const button of document.querySelectorAll("button")) {
     button.disabled = isBusy;
@@ -299,6 +332,7 @@ function renderStatus(data) {
 
   renderKeyboardStatus(data.keyboard || {});
   renderMotionModeStatus(data.motion_mode || {});
+  renderVideoStatus(data.video || {});
 
   const visibleLogs = (data.logs || []).slice(localLogClearedAt);
   logs.textContent = visibleLogs.join("\n");
@@ -320,6 +354,35 @@ function renderMotionModeStatus(motionMode) {
     return;
   }
   motionModeState.textContent = `${result.before_mode || "-"} -> ${result.after_mode || "-"} / code ${result.set_code}`;
+}
+
+function renderVideoStatus(video) {
+  if (video.error) {
+    videoState.textContent = `异常: ${video.error}`;
+  } else if (video.running) {
+    videoState.textContent = video.connected ? "视频运行中" : "连接中";
+  } else {
+    videoState.textContent = "未启动";
+  }
+
+  if (video.running && !videoStream.getAttribute("src")) {
+    videoStream.src = `/api/video/stream?t=${Date.now()}`;
+  }
+  if (video.running && video.frame_count > 0) {
+    videoFrame.classList.add("streaming");
+  }
+  if (!video.running) {
+    videoStream.removeAttribute("src");
+    videoFrame.classList.remove("streaming");
+  }
+
+  const width = video.width || "-";
+  const height = video.height || "-";
+  videoResolution.textContent = `分辨率 ${width} x ${height}`;
+  videoFrames.textContent = `帧数 ${video.frame_count || 0}`;
+  videoAge.textContent = video.frame_age === null || video.frame_age === undefined
+    ? "延迟 -"
+    : `延迟 ${Number(video.frame_age).toFixed(2)}s`;
 }
 
 function renderKeyboardStatus(keyboard) {
@@ -371,6 +434,8 @@ document.querySelector("#stopTask").addEventListener("click", stopTask);
 document.querySelector("#resetParams").addEventListener("click", applyDefaults);
 document.querySelector("#startKeyboard").addEventListener("click", startKeyboard);
 document.querySelector("#stopKeyboard").addEventListener("click", stopKeyboard);
+document.querySelector("#startVideo").addEventListener("click", startVideo);
+document.querySelector("#stopVideo").addEventListener("click", stopVideo);
 document.querySelector("#heightUp").addEventListener("click", () => adjustHeight(1));
 document.querySelector("#heightDown").addEventListener("click", () => adjustHeight(-1));
 for (const id of ["MIN_BODY_HEIGHT", "MAX_BODY_HEIGHT", "HEIGHT_STEP_M"]) {
