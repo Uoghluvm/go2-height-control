@@ -31,7 +31,7 @@
 如果需要使用视频流，先在当前 Python 环境安装 OpenCV：
 
 ```bash
-python -m pip install opencv-python
+python -m pip install -r requirements.txt
 ```
 
 在仓库根目录运行：
@@ -120,7 +120,7 @@ Go2 video track -> Python backend -> JPEG/MJPEG -> browser img
 使用前确认：
 
 ```bash
-python -m pip install opencv-python
+python -m pip install -r requirements.txt
 ```
 
 操作流程：

@@ -54,7 +54,7 @@ python -m pip install --upgrade pip
 Web 页面的视频流预览需要 OpenCV 把 WebRTC 视频帧编码成 MJPEG：
 
 ```bash
-python -m pip install opencv-python
+python -m pip install -r requirements.txt
 ```
 
 ## 安装 unitree_webrtc_connect
@@ -219,7 +219,7 @@ Go2 video track -> Python backend -> JPEG/MJPEG -> browser img
 启动前确认当前 Python 环境已安装：
 
 ```bash
-python -m pip install opencv-python
+python -m pip install -r requirements.txt
 ```
 
 使用步骤：
@@ -372,7 +372,8 @@ python -m pip install -e .
 
 ```bash
 source ~/go2-webrtc-venv/bin/activate
-python -m pip install opencv-python
+cd ~/go2-height-control
+python -m pip install -r requirements.txt
 ```
 
 视频画面不出现
