@@ -34,6 +34,7 @@ const measuredHeight = document.querySelector("#measuredHeight");
 const velocityState = document.querySelector("#velocityState");
 const modeState = document.querySelector("#modeState");
 const motionModeState = document.querySelector("#motionModeState");
+const actionState = document.querySelector("#actionState");
 const heightCode = document.querySelector("#heightCode");
 const heightLimitAlert = document.querySelector("#heightLimitAlert");
 const heightSlider = document.querySelector("#heightSlider");
@@ -227,6 +228,18 @@ async function switchNormalMode() {
   }
 }
 
+async function runFrontJump() {
+  setBusy(true);
+  try {
+    await postJson("/api/action/front_jump", { params: collectParams() });
+  } catch (error) {
+    alert(error.message);
+  } finally {
+    setBusy(false);
+    await refreshStatus();
+  }
+}
+
 async function startVideo() {
   setBusy(true);
   try {
@@ -326,10 +339,13 @@ function renderStatus(data) {
     document.body.dataset.defaultsLoaded = "true";
   }
 
-  statusPill.classList.toggle("running", data.running || data.keyboard?.running || data.video?.running);
+  statusPill.classList.toggle(
+    "running",
+    data.running || data.keyboard?.running || data.video?.running || data.action?.running,
+  );
   statusPill.textContent = data.keyboard?.running
     ? "键盘遥控中"
-    : (data.running ? "任务运行中" : (data.video?.running ? "视频运行中" : "空闲"));
+    : (data.action?.running ? "动作执行中" : (data.running ? "任务运行中" : (data.video?.running ? "视频运行中" : "空闲")));
 
   const task = data.task || "无";
   const exitCode = data.exit_code === null || data.exit_code === undefined ? "-" : data.exit_code;
@@ -337,11 +353,29 @@ function renderStatus(data) {
 
   renderKeyboardStatus(data.keyboard || {});
   renderMotionModeStatus(data.motion_mode || {});
+  renderActionStatus(data.action || {});
   renderVideoStatus(data.video || {});
 
   const visibleLogs = (data.logs || []).slice(localLogClearedAt);
   logs.textContent = visibleLogs.join("\n");
   logs.scrollTop = logs.scrollHeight;
+}
+
+function renderActionStatus(action) {
+  if (action.running) {
+    actionState.textContent = action.action === "front_jump" ? "前跳执行中" : "执行中";
+    return;
+  }
+  if (action.error) {
+    actionState.textContent = `失败: ${action.error}`;
+    return;
+  }
+  const result = action.last_result;
+  if (!result) {
+    actionState.textContent = "-";
+    return;
+  }
+  actionState.textContent = `FrontJump code ${result.front_jump_code}`;
 }
 
 function renderMotionModeStatus(motionMode) {
@@ -439,6 +473,7 @@ document.querySelector("#stopTask").addEventListener("click", stopTask);
 document.querySelector("#resetParams").addEventListener("click", applyDefaults);
 document.querySelector("#startKeyboard").addEventListener("click", startKeyboard);
 document.querySelector("#stopKeyboard").addEventListener("click", stopKeyboard);
+document.querySelector("#frontJump").addEventListener("click", runFrontJump);
 document.querySelector("#startVideo").addEventListener("click", startVideo);
 document.querySelector("#stopVideo").addEventListener("click", stopVideo);
 document.querySelector("#heightUp").addEventListener("click", () => adjustHeight(1));
@@ -480,6 +515,11 @@ window.addEventListener("keydown", (event) => {
   if (!event.repeat && (key === "e" || event.key === "ArrowDown")) {
     event.preventDefault();
     adjustHeight(-1);
+  }
+
+  if (!event.repeat && event.code === "Space") {
+    event.preventDefault();
+    runFrontJump();
   }
 });
 

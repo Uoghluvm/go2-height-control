@@ -28,9 +28,12 @@ body {
   width: min(1180px, calc(100vw - 32px));
   margin: 0 auto;
   padding: 28px 0;
+  display: flex;
+  flex-direction: column;
 }
 
 .topbar {
+  order: 1;
   display: flex;
   align-items: end;
   justify-content: space-between;
@@ -79,6 +82,7 @@ h2 {
 }
 
 .grid {
+  order: 3;
   display: grid;
   grid-template-columns: minmax(320px, 420px) 1fr;
   gap: 16px;
@@ -89,6 +93,12 @@ h2 {
   border: 1px solid var(--line);
   border-radius: 8px;
   padding: 18px;
+}
+
+.remote-panel {
+  order: 2;
+  border-color: #b8c4d3;
+  box-shadow: 0 10px 28px rgba(15, 23, 42, 0.08);
 }
 
 .panel-title {
@@ -179,6 +189,17 @@ button.danger:hover {
   background: var(--danger-dark);
 }
 
+button.jump {
+  border-color: #ca8a04;
+  background: #facc15;
+  color: #422006;
+  font-weight: 700;
+}
+
+button.jump:hover {
+  background: #eab308;
+}
+
 button.ghost {
   min-height: 34px;
   background: transparent;
@@ -209,7 +230,8 @@ button:disabled {
 }
 
 .keyboard-panel {
-  margin-top: 16px;
+  margin-top: 0;
+  margin-bottom: 16px;
 }
 
 .video-panel {
@@ -269,9 +291,47 @@ button:disabled {
 
 .keyboard-grid {
   display: grid;
-  grid-template-columns: 220px 220px 1fr;
+  grid-template-columns: minmax(180px, 220px) minmax(180px, 220px) minmax(280px, 1fr);
   gap: 16px;
   align-items: stretch;
+}
+
+.keymap {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(180px, 1fr));
+  gap: 12px;
+  margin-bottom: 16px;
+}
+
+.key-cluster {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-height: 48px;
+  padding: 10px 12px;
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  background: #f8fafc;
+}
+
+.key-label {
+  min-width: 78px;
+  color: var(--muted);
+  font-size: 13px;
+}
+
+kbd {
+  min-width: 34px;
+  height: 30px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border: 1px solid #b8c4d3;
+  border-bottom-width: 3px;
+  border-radius: 6px;
+  background: #ffffff;
+  color: var(--text);
+  font: 700 13px/1 ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", monospace;
 }
 
 .inline-alert {
@@ -296,6 +356,7 @@ button:disabled {
   color: var(--muted);
   font-size: 14px;
   margin-bottom: 12px;
+  text-align: center;
 }
 
 .stick {
@@ -354,9 +415,13 @@ button:disabled {
 
 .keyboard-actions {
   display: grid;
-  grid-template-columns: repeat(4, minmax(150px, 1fr));
+  grid-template-columns: 1.2fr 1fr 1fr 1fr 1fr;
   gap: 12px;
   margin-top: 16px;
+}
+
+.keyboard-actions button {
+  min-height: 52px;
 }
 
 .height-slider-card {
@@ -425,6 +490,7 @@ pre {
     .two,
     .keyboard-grid,
     .keyboard-actions,
+    .keymap,
     .video-actions {
     grid-template-columns: 1fr;
   }

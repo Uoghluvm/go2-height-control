@@ -578,6 +578,114 @@ keyboard = KeyboardController(manager)
 motion_mode = MotionModeManager(manager)
 
 
+class ActionManager:
+    def __init__(self, task_manager):
+        self.task_manager = task_manager
+        self.lock = threading.Lock()
+        self.running = False
+        self.action = None
+        self.last_result = None
+        self.error = None
+        self.started_at = None
+
+    def snapshot(self):
+        with self.lock:
+            return {
+                "running": self.running,
+                "action": self.action,
+                "last_result": self.last_result,
+                "error": self.error,
+                "started_at": self.started_at,
+            }
+
+    def front_jump(self, params):
+        with self.lock:
+            if self.running:
+                raise RuntimeError("动作正在执行")
+            if keyboard.snapshot()["running"]:
+                raise RuntimeError("请先停止键盘遥控，再执行前跳")
+            self.running = True
+            self.action = "front_jump"
+            self.error = None
+            self.started_at = time.time()
+
+        self.task_manager.stop_current()
+        thread = threading.Thread(target=self._thread_main, args=(params,), daemon=True)
+        thread.start()
+
+    def _thread_main(self, params):
+        try:
+            result = asyncio.run(self._front_jump(params))
+            with self.lock:
+                self.last_result = result
+            self.task_manager.append_log(f"前跳完成: FrontJump code={result.get('front_jump_code')}")
+        except Exception as exc:
+            with self.lock:
+                self.error = str(exc)
+            self.task_manager.append_log(f"前跳失败: {exc}")
+        finally:
+            with self.lock:
+                self.running = False
+
+    async def _front_jump(self, params):
+        env_params = {key: str(params.get(key, value)) for key, value in DEFAULT_PARAMS.items()}
+        ip = env_params["UNITREE_ROBOT_IP"]
+        normal_height = float(env_params["NORMAL_BODY_HEIGHT"])
+
+        conn = UnitreeWebRTCConnection(WebRTCConnectionMethod.LocalSTA, ip=ip)
+        self.task_manager.append_log(f"连接 Go2 并执行前跳: {ip}")
+        await conn.connect()
+        result = {}
+        try:
+            try:
+                mode_result = await set_normal_motion_mode(conn)
+                result["motion_mode"] = mode_result
+                self.task_manager.append_log(
+                    "前跳前切换普通运动模式: "
+                    f"before={mode_result.get('before_mode')} set_code={mode_result.get('set_code')} "
+                    f"after={mode_result.get('after_mode')}"
+                )
+            except Exception as exc:
+                self.task_manager.append_log(f"前跳前切换普通运动模式跳过: {exc}")
+
+            response = await sport_call(conn, "BalanceStand")
+            result["balance_stand_code"] = response_code(response)
+            self.task_manager.append_log(f"前跳前 BalanceStand code={result['balance_stand_code']}")
+            await asyncio.sleep(0.4)
+
+            response = await sport_call(conn, "BodyHeight", {"data": normal_height})
+            result["body_height_code"] = response_code(response)
+            self.task_manager.append_log(
+                f"前跳前恢复 BodyHeight target={normal_height:.3f}, code={result['body_height_code']}"
+            )
+            await asyncio.sleep(0.6)
+
+            response = await sport_call(conn, "FrontJump")
+            result["front_jump_code"] = response_code(response)
+            result["front_jump_data"] = response_data(response)
+            self.task_manager.append_log(
+                f"FrontJump code={result['front_jump_code']}, data={result['front_jump_data']!r}"
+            )
+            await asyncio.sleep(1.5)
+
+            try:
+                response = await sport_call(conn, "StopMove")
+                result["stop_move_code"] = response_code(response)
+                self.task_manager.append_log(f"前跳后 StopMove code={result['stop_move_code']}")
+            except Exception as exc:
+                self.task_manager.append_log(f"前跳后 StopMove 跳过: {exc}")
+
+            return result
+        finally:
+            try:
+                await conn.disconnect()
+            except Exception:
+                pass
+
+
+action_manager = ActionManager(manager)
+
+
 class VideoStreamManager:
     def __init__(self, task_manager):
         self.task_manager = task_manager
@@ -742,6 +850,7 @@ class Handler(BaseHTTPRequestHandler):
             data = manager.snapshot()
             data["keyboard"] = keyboard.snapshot()
             data["motion_mode"] = motion_mode.snapshot()
+            data["action"] = action_manager.snapshot()
             data["video"] = video_stream.snapshot()
             self.write_json(data)
             return
@@ -789,6 +898,11 @@ class Handler(BaseHTTPRequestHandler):
 
             if parsed.path == "/api/motion/normal":
                 motion_mode.switch_normal(payload.get("params", {}))
+                self.write_json({"ok": True})
+                return
+
+            if parsed.path == "/api/action/front_jump":
+                action_manager.front_jump(payload.get("params", {}))
                 self.write_json({"ok": True})
                 return
 

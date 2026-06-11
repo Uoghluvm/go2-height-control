@@ -127,12 +127,28 @@
         </section>
       </section>
 
-      <section class="panel keyboard-panel">
+      <section class="panel keyboard-panel remote-panel">
           <div class="panel-title">
             <h2>键盘遥控</h2>
             <span id="keyboardState">未启动</span>
           </div>
           <div class="inline-alert" id="heightLimitAlert" hidden></div>
+
+          <div class="keymap">
+            <div class="key-cluster">
+              <span class="key-label">移动</span>
+              <kbd>W</kbd><kbd>A</kbd><kbd>S</kbd><kbd>D</kbd>
+            </div>
+            <div class="key-cluster">
+              <span class="key-label">转向/右摇杆</span>
+              <kbd>I</kbd><kbd>J</kbd><kbd>K</kbd><kbd>L</kbd>
+            </div>
+            <div class="key-cluster">
+              <span class="key-label">高度/动作</span>
+              <kbd>Q</kbd><kbd>E</kbd><kbd>↑</kbd><kbd>↓</kbd>
+              <kbd>Space</kbd>
+            </div>
+          </div>
 
           <div class="keyboard-grid">
           <div class="stick-card">
@@ -153,6 +169,7 @@
             <div class="state-row"><span>速度反馈</span><strong id="velocityState">-</strong></div>
             <div class="state-row"><span>步态/模式</span><strong id="modeState">-</strong></div>
             <div class="state-row"><span>运动模式切换</span><strong id="motionModeState">-</strong></div>
+            <div class="state-row"><span>前跳动作</span><strong id="actionState">-</strong></div>
             <div class="state-row"><span>高度响应码</span><strong id="heightCode">-</strong></div>
           </div>
         </div>
@@ -160,6 +177,7 @@
         <div class="keyboard-actions">
           <button class="primary" id="startKeyboard">启动键盘遥控</button>
           <button class="danger" id="stopKeyboard">停止键盘遥控</button>
+          <button class="jump" id="frontJump">前跳 Space</button>
           <button id="heightUp">升高 Q / ↑</button>
           <button id="heightDown">降低 E / ↓</button>
         </div>
