@@ -12,7 +12,11 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from urllib.parse import urlparse
 
+from aiortc import RTCPeerConnection, RTCSessionDescription
+from aiortc.mediastreams import MediaStreamError
 from unitree_webrtc_connect.constants import RTC_TOPIC, SPORT_CMD
+from unitree_webrtc_connect.unitree_auth import NoSdpAnswerError, RobotBusyError
+from unitree_webrtc_connect.webrtc_datachannel import WebRTCDataChannel
 from unitree_webrtc_connect.webrtc_driver import UnitreeWebRTCConnection, WebRTCConnectionMethod
 
 
@@ -575,6 +579,66 @@ keyboard = KeyboardController(manager)
 motion_mode = MotionModeManager(manager)
 
 
+class LocalVideoChannel:
+    def __init__(self, pc, datachannel):
+        self.pc = pc
+        self.pc.addTransceiver("video", direction="recvonly")
+        self.datachannel = datachannel
+        self.track_callbacks = []
+
+    def switchVideoChannel(self, switch):
+        self.datachannel.switchVideoChannel(switch)
+
+    def add_track_callback(self, callback):
+        if callable(callback):
+            self.track_callbacks.append(callback)
+
+    async def track_handler(self, track):
+        for callback in self.track_callbacks:
+            await callback(track)
+
+
+class VideoEnabledConnection(UnitreeWebRTCConnection):
+    async def init_webrtc(self, turn_server_info=None, ip=None):
+        configuration = self.create_webrtc_configuration(turn_server_info)
+        self.pc = RTCPeerConnection(configuration)
+        self.datachannel = WebRTCDataChannel(self, self.pc)
+        self.video = LocalVideoChannel(self.pc, self.datachannel)
+
+        @self.pc.on("connectionstatechange")
+        async def on_connection_state_change():
+            self.isConnected = self.pc.connectionState == "connected"
+
+        @self.pc.on("track")
+        async def on_track(track):
+            try:
+                if track.kind == "video":
+                    await track.recv()
+                    await self.video.track_handler(track)
+            except MediaStreamError:
+                return
+
+        offer = await self.pc.createOffer()
+        await self.pc.setLocalDescription(offer)
+
+        if self.connectionMethod == WebRTCConnectionMethod.Remote:
+            peer_answer_json = await self.get_answer_from_remote_peer(self.pc, turn_server_info)
+        elif self.connectionMethod in (WebRTCConnectionMethod.LocalSTA, WebRTCConnectionMethod.LocalAP):
+            peer_answer_json = await self.get_answer_from_local_peer(self.pc, self.ip)
+        else:
+            peer_answer_json = None
+
+        if peer_answer_json is None:
+            raise NoSdpAnswerError()
+        peer_answer = json.loads(peer_answer_json)
+        if peer_answer["sdp"] == "reject":
+            raise RobotBusyError()
+
+        remote_sdp = RTCSessionDescription(sdp=peer_answer["sdp"], type=peer_answer["type"])
+        await self.pc.setRemoteDescription(remote_sdp)
+        await self.datachannel.wait_datachannel_open()
+
+
 class VideoStreamManager:
     def __init__(self, task_manager):
         self.task_manager = task_manager
@@ -699,16 +763,10 @@ class VideoStreamManager:
                     self.last_frame_at = time.time()
                     self.condition.notify_all()
 
-        conn = UnitreeWebRTCConnection(WebRTCConnectionMethod.LocalSTA, ip=ip)
+        conn = VideoEnabledConnection(WebRTCConnectionMethod.LocalSTA, ip=ip)
         self.conn = conn
         self.task_manager.append_log(f"视频流连接 Go2: {ip}")
         await conn.connect()
-        if not hasattr(conn, "video"):
-            raise RuntimeError(
-                "当前 Python 环境安装的 unitree_webrtc_connect 不支持 video channel。"
-                "请更新上游依赖：cd ~/unitree_webrtc_connect && git pull && "
-                "python -m pip install -e ."
-            )
         conn.video.add_track_callback(recv_camera_stream)
         conn.video.switchVideoChannel(True)
 

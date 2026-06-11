@@ -138,7 +138,14 @@ python -m pip install -r requirements.txt
 UnitreeWebRTCConnection object has no attribute 'video'
 ```
 
-说明当前 Python 环境安装的是旧版 `unitree_webrtc_connect`。更新上游仓库并重新安装：
+先更新本仓库。新版本已经不再依赖上游 `conn.video` 属性：
+
+```bash
+cd ~/go2-height-control
+git pull
+```
+
+同时建议更新上游 WebRTC 基础依赖：
 
 ```bash
 source ~/go2-webrtc-venv/bin/activate
@@ -147,24 +154,7 @@ git pull
 python -m pip install -e .
 ```
 
-然后检查当前环境是否包含 video channel 支持：
-
-```bash
-python - <<'PY'
-import inspect
-import unitree_webrtc_connect.webrtc_driver as driver
-from unitree_webrtc_connect.webrtc_video import WebRTCVideoChannel
-print("WebRTCVideoChannel OK")
-print("driver creates video:", "self.video = WebRTCVideoChannel" in inspect.getsource(driver.UnitreeWebRTCConnection))
-PY
-```
-
-正常应看到：
-
-```text
-WebRTCVideoChannel OK
-driver creates video: True
-```
+说明：上游 `driver creates video: False` 不再是问题，本项目后端会为视频预览单独创建带 `video recvonly` transceiver 的 WebRTC 连接。
 
 ## 高度参数说明
 

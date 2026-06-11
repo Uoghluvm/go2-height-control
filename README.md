@@ -86,7 +86,7 @@ unitree_webrtc_connect OK
 BodyHeight api: 1013
 ```
 
-如果你之前已经 clone 过 `unitree_webrtc_connect`，需要先更新它，否则视频功能可能报错 `UnitreeWebRTCConnection object has no attribute 'video'`：
+如果你之前已经 clone 过 `unitree_webrtc_connect`，仍建议更新它，确保 WebRTC 基础连接、鉴权和 DataChannel 代码是新的：
 
 ```bash
 source ~/go2-webrtc-venv/bin/activate
@@ -95,24 +95,7 @@ git pull
 python -m pip install -e .
 ```
 
-再确认当前 Python 环境里包含 video channel 支持：
-
-```bash
-python - <<'PY'
-import inspect
-import unitree_webrtc_connect.webrtc_driver as driver
-from unitree_webrtc_connect.webrtc_video import WebRTCVideoChannel
-print("WebRTCVideoChannel OK")
-print("driver creates video:", "self.video = WebRTCVideoChannel" in inspect.getsource(driver.UnitreeWebRTCConnection))
-PY
-```
-
-正常应输出：
-
-```text
-WebRTCVideoChannel OK
-driver creates video: True
-```
+说明：本项目的视频功能不再要求上游 `UnitreeWebRTCConnection` 自带 `conn.video` 属性。后端会为视频预览单独创建带 `video recvonly` transceiver 的 WebRTC 连接。
 
 ## 安装本功能包
 
@@ -410,7 +393,7 @@ python -m pip install -r requirements.txt
 
 - 是否点击了“开启视频”。
 - `UNITREE_ROBOT_IP` 是否正确。
-- 当前 Python 环境里的 `unitree_webrtc_connect.webrtc_video` 是否存在，且 `webrtc_driver.py` 是否创建 `self.video`；没有就更新 `~/unitree_webrtc_connect` 并重新 `pip install -e .`。
+- 当前 Python 环境是否能正常导入 `unitree_webrtc_connect`，并且上游 Go2 WebRTC 基础连接是否可用。
 - `unitree_webrtc_connect` 的 Go2 video 示例在同一环境下是否能收到画面。
 - 网络是否稳定；视频比普通 Sport API 更依赖带宽和丢包情况。
 
