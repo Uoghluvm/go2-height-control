@@ -2,6 +2,7 @@
 import asyncio
 import json
 import os
+import runpy
 import signal
 import subprocess
 import sys
@@ -16,9 +17,9 @@ from unitree_webrtc_connect.constants import RTC_TOPIC, SPORT_CMD
 from unitree_webrtc_connect.webrtc_driver import UnitreeWebRTCConnection, WebRTCConnectionMethod
 
 
-ROOT = Path(__file__).resolve().parents[1]
+ROOT = Path(getattr(sys, "_MEIPASS", Path(__file__).resolve().parents[1]))
 LEGACY_DIR = ROOT / "go2_height_control_legacy_114"
-STATIC_DIR = Path(__file__).resolve().parent / "static"
+STATIC_DIR = ROOT / "go2_height_control_ui" / "static"
 
 HOST = os.environ.get("GO2_UI_HOST", "127.0.0.1")
 PORT = int(os.environ.get("GO2_UI_PORT", "8765"))
@@ -51,6 +52,35 @@ MIME_TYPES = {
     ".js": "application/javascript; charset=utf-8",
     ".json": "application/json; charset=utf-8",
 }
+
+
+def is_frozen_app():
+    return bool(getattr(sys, "frozen", False))
+
+
+def legacy_task_command(task_name):
+    if task_name not in TASKS:
+        raise ValueError(f"Unknown task: {task_name}")
+    if is_frozen_app():
+        return [sys.executable, "--legacy-task", task_name]
+    return [sys.executable, str(LEGACY_DIR / TASKS[task_name])]
+
+
+def run_legacy_task(task_name):
+    if task_name not in TASKS:
+        raise SystemExit(f"Unknown legacy task: {task_name}")
+    script_path = LEGACY_DIR / TASKS[task_name]
+    if not script_path.exists():
+        raise SystemExit(f"找不到控制脚本: {script_path}")
+    os.chdir(str(LEGACY_DIR))
+    sys.path.insert(0, str(LEGACY_DIR))
+    runpy.run_path(str(script_path), run_name="__main__")
+
+
+def subprocess_creation_kwargs():
+    if os.name == "nt":
+        return {"creationflags": subprocess.CREATE_NEW_PROCESS_GROUP}
+    return {"start_new_session": True}
 
 
 class TaskManager:
@@ -99,8 +129,7 @@ class TaskManager:
             value = params.get(key, default_value)
             env[key] = str(value)
 
-        script = TASKS[task_name]
-        command = [sys.executable, str(LEGACY_DIR / script)]
+        command = legacy_task_command(task_name)
 
         with self.lock:
             self.logs.clear()
@@ -116,7 +145,7 @@ class TaskManager:
                 stderr=subprocess.STDOUT,
                 text=True,
                 bufsize=1,
-                start_new_session=True,
+                **subprocess_creation_kwargs(),
             )
             process = self.process
 
@@ -133,19 +162,28 @@ class TaskManager:
                 return
 
         self.append_log("正在停止当前任务...")
-        try:
-            os.killpg(process.pid, signal.SIGINT)
-        except ProcessLookupError:
-            return
+        if os.name == "nt":
+            try:
+                process.send_signal(signal.CTRL_BREAK_EVENT)
+            except Exception:
+                process.terminate()
+        else:
+            try:
+                os.killpg(process.pid, signal.SIGINT)
+            except ProcessLookupError:
+                return
 
         try:
             process.wait(timeout=3)
         except subprocess.TimeoutExpired:
             self.append_log("任务未及时退出，发送 SIGTERM")
-            try:
-                os.killpg(process.pid, signal.SIGTERM)
-            except ProcessLookupError:
-                pass
+            if os.name == "nt":
+                process.terminate()
+            else:
+                try:
+                    os.killpg(process.pid, signal.SIGTERM)
+                except ProcessLookupError:
+                    pass
 
     def _read_process(self, process):
         assert process.stdout is not None
@@ -1011,4 +1049,7 @@ def main():
 
 
 if __name__ == "__main__":
+    if len(sys.argv) == 3 and sys.argv[1] == "--legacy-task":
+        run_legacy_task(sys.argv[2])
+        raise SystemExit(0)
     main()

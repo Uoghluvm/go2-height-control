@@ -121,6 +121,78 @@ cd go2-height-control
 source ~/go2-webrtc-venv/bin/activate
 ```
 
+## 制作安装包
+
+如果是给最终用户使用，推荐制作安装包，而不是要求用户手动安装 Python 依赖。
+
+当前打包策略：
+
+- Ubuntu 22.04：用 PyInstaller 先冻结成本机可执行程序，再打进 `.deb`。用户安装后直接运行 `go2-height-control`。
+- Windows：用 PyInstaller 冻结成 exe 文件夹，再用 Inno Setup 制作 `.exe` 安装器。用户安装后从开始菜单或桌面快捷方式启动。
+- Python、`unitree_webrtc_connect`、`aiortc`、`opencv-python` 等依赖由构建机安装并打进产物；最终用户不需要手动运行 `pip install`。
+
+### Ubuntu 22.04 .deb
+
+构建机需要 Ubuntu 22.04、Python 3、venv、pip、git、dpkg-deb，并且能访问 Python 包源和 GitHub：
+
+```bash
+sudo apt update
+sudo apt install -y git python3 python3-venv python3-pip dpkg-dev
+```
+
+在仓库根目录运行：
+
+```bash
+packaging/linux/build_deb.sh
+```
+
+生成文件：
+
+```text
+dist/packages/go2-height-control_0.1.0_amd64.deb
+```
+
+用户安装：
+
+```bash
+sudo apt install ./go2-height-control_0.1.0_amd64.deb
+go2-height-control
+```
+
+浏览器打开：
+
+```text
+http://127.0.0.1:8765
+```
+
+### Windows exe 安装器
+
+构建机需要 Windows、Python 3、git。如果要生成正式安装器，还需要安装 Inno Setup 6。
+
+在 PowerShell 中运行：
+
+```powershell
+powershell -ExecutionPolicy Bypass -File packaging\windows\build_windows.ps1
+```
+
+如果已安装 Inno Setup，会生成：
+
+```text
+dist\installer\go2-height-control-setup-0.1.0.exe
+```
+
+如果没有安装 Inno Setup，也会先生成可直接运行的便携版目录：
+
+```text
+dist\go2-height-control\
+```
+
+Windows 用户安装后直接启动 `Go2 Height Control`，浏览器打开：
+
+```text
+http://127.0.0.1:8765
+```
+
 ## 连接 Go2
 
 本项目默认使用 LocalSTA 方式连接机器人，默认 IP 是：
