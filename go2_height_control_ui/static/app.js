@@ -44,6 +44,7 @@ const heightSliderMax = document.querySelector("#heightSliderMax");
 const videoState = document.querySelector("#videoState");
 const videoFrame = document.querySelector(".video-frame");
 const videoStream = document.querySelector("#videoStream");
+const videoIface = document.querySelector("#videoIface");
 const videoResolution = document.querySelector("#videoResolution");
 const videoFrames = document.querySelector("#videoFrames");
 const videoAge = document.querySelector("#videoAge");
@@ -417,6 +418,7 @@ function renderVideoStatus(video) {
 
   const width = video.width || "-";
   const height = video.height || "-";
+  videoIface.textContent = `网卡 ${video.iface || "-"}`;
   videoResolution.textContent = `分辨率 ${width} x ${height}`;
   videoFrames.textContent = `帧数 ${video.frame_count || 0}`;
   videoAge.textContent = video.frame_age === null || video.frame_age === undefined

@@ -51,15 +51,15 @@ source ~/go2-webrtc-venv/bin/activate
 python -m pip install --upgrade pip
 ```
 
-Web 页面的视频流预览使用 Go2 的 H.264 UDP 组播，需要 OpenCV 能通过 GStreamer 打开视频管线。Ubuntu 推荐安装系统 OpenCV 和 GStreamer 插件：
+Web 页面的视频流预览使用 Go2 的 H.264 UDP 组播，需要 OpenCV 能通过 GStreamer 打开视频管线。Ubuntu 推荐安装系统 OpenCV、GStreamer 插件和 `iproute2`：
 
 ```bash
-sudo apt install -y python3-opencv gstreamer1.0-tools gstreamer1.0-plugins-base \
+sudo apt install -y iproute2 python3-opencv gstreamer1.0-tools gstreamer1.0-plugins-base \
   gstreamer1.0-plugins-good gstreamer1.0-plugins-bad gstreamer1.0-plugins-ugly \
   gstreamer1.0-libav
 ```
 
-`requirements.txt` 里保留了 `opencv-python` 作为普通 Python 环境的兜底依赖，但 pip 版 OpenCV 常常不带 GStreamer。若页面提示无法打开 H.264 组播，请优先使用系统 `python3-opencv` 或自行安装带 GStreamer 的 OpenCV。
+不要依赖 pip 的 `opencv-python` 来跑视频预览；它通常不带 GStreamer 支持。若页面提示无法打开 H.264 组播，请优先使用系统 `python3-opencv` 或自行安装带 GStreamer 的 OpenCV。
 
 ## 安装 unitree_webrtc_connect
 
@@ -234,10 +234,10 @@ Go2 H264 RTP multicast 230.1.1.1:1720
 -> browser img
 ```
 
-启动前确认系统有 GStreamer 和带 GStreamer 支持的 OpenCV：
+启动前确认系统有 GStreamer、带 GStreamer 支持的 OpenCV 和 `iproute2`：
 
 ```bash
-sudo apt install -y python3-opencv gstreamer1.0-tools gstreamer1.0-plugins-base \
+sudo apt install -y iproute2 python3-opencv gstreamer1.0-tools gstreamer1.0-plugins-base \
   gstreamer1.0-plugins-good gstreamer1.0-plugins-bad gstreamer1.0-plugins-ugly \
   gstreamer1.0-libav
 ```
@@ -245,11 +245,20 @@ sudo apt install -y python3-opencv gstreamer1.0-tools gstreamer1.0-plugins-base 
 使用步骤：
 
 1. 启动 Web 控制台。
-2. 把“视频组播网卡”改成电脑连接 Go2 的网卡名，例如 `eth0`、`enp3s0`、`enx...`。
-3. 默认组播地址保持 `230.1.1.1`，端口保持 `1720`。
-4. 点击“开启视频”。
-5. 页面显示分辨率、帧数和最近帧延迟。
-6. 不需要画面时点击“关闭视频”。
+2. 在网页里填写实际 Go2 IP。视频启动时会根据这个 IP 自动识别电脑连接 Go2 的网卡。
+3. “视频组播网卡”默认保持 `auto`。如果自动识别失败，再手动改成 `eth0`、`enp3s0`、`enx...` 这类真实网卡名。
+4. 默认组播地址保持 `230.1.1.1`，端口保持 `1720`。
+5. 点击“开启视频”。
+6. 页面显示实际使用的网卡、分辨率、帧数和最近帧延迟。
+7. 不需要画面时点击“关闭视频”。
+
+后端会先查本机 IPv4 地址段，优先选择和 Go2 IP 在同一子网的网卡；找不到同子网网卡时，再用路由结果兜底。可用下面命令查看路由兜底会返回的网卡：
+
+```bash
+ip route get 你的机器人IP
+```
+
+输出里的 `dev xxx` 就是组播网卡名。
 
 可以先单独测试 GStreamer 管线：
 
@@ -263,8 +272,11 @@ gst-launch-1.0 udpsrc address=230.1.1.1 port=1720 multicast-iface=你的网卡�
 
 ```bash
 python3 - <<'PY'
+import subprocess
 import cv2
-iface = "eth0"  # 改成你的网卡名
+robot_ip = "192.168.12.2"  # 改成你的 Go2 IP
+route = subprocess.check_output(["ip", "route", "get", robot_ip], text=True).split()
+iface = route[route.index("dev") + 1]
 pipeline = (
     f"udpsrc address=230.1.1.1 port=1720 multicast-iface={iface} "
     "! application/x-rtp, media=video, encoding-name=H264 "
@@ -299,7 +311,7 @@ MOVE_COMMAND_PERIOD_S=0.10
 REMOTE_FORWARD_LY=0.45
 ESTIMATED_SPEED_MPS=0.20
 REMOTE_PUBLISH_PERIOD_S=0.02
-VIDEO_MULTICAST_IFACE=eth0
+VIDEO_MULTICAST_IFACE=auto
 VIDEO_MULTICAST_ADDRESS=230.1.1.1
 VIDEO_MULTICAST_PORT=1720
 ```
@@ -420,7 +432,7 @@ python -m pip install -e .
 
 优先检查：
 
-- “视频组播网卡”是否填的是连接 Go2 的真实网卡名。用 `ip -br addr` 查看。
+- “视频组播网卡”是否为 `auto`，或是否填的是连接 Go2 的真实网卡名。用 `ip route get 机器人IP` 或 `ip -br addr` 查看。
 - 是否能用上面的 `gst-launch-1.0` 命令看到视频。
 - 当前 OpenCV 是否支持 GStreamer。可以运行：
 

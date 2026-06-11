@@ -1,5 +1,9 @@
-# Fallback for Python environments without system cv2.
-# Go2 H264 multicast preview requires OpenCV built with GStreamer.
-# On Ubuntu, prefer apt packages documented in README.md:
-# python3-opencv + gstreamer1.0-* plugins.
-opencv-python
+# Python package dependencies are provided by the upstream unitree_webrtc_connect install.
+#
+# Video preview requires OpenCV built with GStreamer support. Do not rely on
+# pip's opencv-python wheel for this feature; it commonly lacks GStreamer.
+# On Ubuntu, install the system packages documented in README.md:
+#
+#   sudo apt install -y python3-opencv gstreamer1.0-tools \
+#     gstreamer1.0-plugins-base gstreamer1.0-plugins-good \
+#     gstreamer1.0-plugins-bad gstreamer1.0-plugins-ugly gstreamer1.0-libav

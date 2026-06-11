@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
 import asyncio
+import ipaddress
 import json
 import os
 import signal
@@ -36,7 +37,7 @@ DEFAULT_PARAMS = {
     "HEIGHT_STEP_M": "0.01",
     "MIN_BODY_HEIGHT": "-0.13",
     "MAX_BODY_HEIGHT": "0.05",
-    "VIDEO_MULTICAST_IFACE": "eth0",
+    "VIDEO_MULTICAST_IFACE": "auto",
     "VIDEO_MULTICAST_ADDRESS": "230.1.1.1",
     "VIDEO_MULTICAST_PORT": "1720",
 }
@@ -202,6 +203,56 @@ def parse_json_data(raw):
         return json.loads(raw)
     except Exception:
         return None
+
+
+def detect_route_iface(target_ip):
+    try:
+        target = ipaddress.ip_address(target_ip)
+    except ValueError:
+        return None
+
+    try:
+        result = subprocess.run(
+            ["ip", "-j", "-4", "addr", "show"],
+            check=True,
+            capture_output=True,
+            text=True,
+            timeout=2,
+        )
+        links = json.loads(result.stdout)
+        for link in links:
+            ifname = link.get("ifname")
+            if not ifname or ifname == "lo":
+                continue
+            for info in link.get("addr_info", []):
+                local = info.get("local")
+                prefixlen = info.get("prefixlen")
+                if not local or prefixlen is None:
+                    continue
+                network = ipaddress.ip_network(f"{local}/{prefixlen}", strict=False)
+                if target in network:
+                    return ifname
+    except Exception:
+        pass
+
+    try:
+        result = subprocess.run(
+            ["ip", "route", "get", target_ip],
+            check=True,
+            capture_output=True,
+            text=True,
+            timeout=2,
+        )
+    except Exception:
+        return None
+
+    parts = result.stdout.split()
+    if "dev" not in parts:
+        return None
+    index = parts.index("dev")
+    if index + 1 >= len(parts):
+        return None
+    return parts[index + 1]
 
 
 async def get_motion_mode(conn):
@@ -703,6 +754,7 @@ class VideoStreamManager:
         self.width = None
         self.height = None
         self.latest_jpeg = None
+        self.iface = None
         self.params = DEFAULT_PARAMS.copy()
 
     def snapshot(self):
@@ -720,6 +772,7 @@ class VideoStreamManager:
                 "frame_count": self.frame_count,
                 "width": self.width,
                 "height": self.height,
+                "iface": self.iface,
             }
 
     def start(self, params):
@@ -737,6 +790,7 @@ class VideoStreamManager:
             self.width = None
             self.height = None
             self.latest_jpeg = None
+            self.iface = None
 
         self.task_manager.append_log("启动 Go2 视频流")
         self.thread = threading.Thread(target=self._thread_main, daemon=True)
@@ -781,12 +835,22 @@ class VideoStreamManager:
         try:
             import cv2
         except ImportError as exc:
-            raise RuntimeError("缺少 OpenCV，请运行: python -m pip install -r requirements.txt") from exc
+            raise RuntimeError("缺少 OpenCV，请安装支持 GStreamer 的 python3-opencv") from exc
 
         with self.lock:
-            iface = self.params["VIDEO_MULTICAST_IFACE"].strip() or "eth0"
+            robot_ip = self.params["UNITREE_ROBOT_IP"].strip()
+            configured_iface = self.params["VIDEO_MULTICAST_IFACE"].strip()
+            iface = configured_iface
+            if not iface or iface.lower() == "auto":
+                iface = detect_route_iface(robot_ip)
+                if not iface:
+                    raise RuntimeError(
+                        f"无法根据 Go2 IP {robot_ip} 自动识别视频组播网卡，"
+                        "请手动填写视频组播网卡"
+                    )
             address = self.params["VIDEO_MULTICAST_ADDRESS"].strip() or "230.1.1.1"
             port = int(float(self.params["VIDEO_MULTICAST_PORT"]))
+            self.iface = iface
 
         pipeline = (
             f"udpsrc address={address} port={port} multicast-iface={iface} "

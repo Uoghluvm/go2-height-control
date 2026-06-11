@@ -28,13 +28,15 @@
 
 ## 启动界面
 
-如果需要使用视频流，先安装 GStreamer 和带 GStreamer 支持的 OpenCV：
+如果需要使用视频流，先安装 GStreamer、带 GStreamer 支持的 OpenCV 和 `iproute2`：
 
 ```bash
-sudo apt install -y python3-opencv gstreamer1.0-tools gstreamer1.0-plugins-base \
+sudo apt install -y iproute2 python3-opencv gstreamer1.0-tools gstreamer1.0-plugins-base \
   gstreamer1.0-plugins-good gstreamer1.0-plugins-bad gstreamer1.0-plugins-ugly \
   gstreamer1.0-libav
 ```
+
+不要依赖 pip 的 `opencv-python` 来跑视频预览；它通常不带 GStreamer 支持。
 
 在仓库根目录运行：
 
@@ -130,11 +132,21 @@ gst-launch-1.0 --version
 
 操作流程：
 
-1. 确认“视频组播网卡”是电脑连接 Go2 的网卡名，例如 `eth0`、`enp3s0`、`enx...`。
-2. 保持默认组播地址 `230.1.1.1` 和端口 `1720`。
-3. 点击“开启视频”。
-3. 页面会显示画面、分辨率、帧数和最近帧延迟。
-4. 不需要画面时点击“关闭视频”。
+1. 在网页里填写实际 Go2 IP。
+2. “视频组播网卡”默认保持 `auto`。后端会根据 Go2 IP 自动识别电脑连接 Go2 的网卡。
+3. 如果自动识别失败，再手动改成 `eth0`、`enp3s0`、`enx...` 这类真实网卡名。
+4. 保持默认组播地址 `230.1.1.1` 和端口 `1720`。
+5. 点击“开启视频”。
+6. 页面会显示画面、实际使用的网卡、分辨率、帧数和最近帧延迟。
+7. 不需要画面时点击“关闭视频”。
+
+后端会先查本机 IPv4 地址段，优先选择和 Go2 IP 在同一子网的网卡；找不到同子网网卡时，再用路由结果兜底。可用下面命令查看路由兜底会返回的网卡：
+
+```bash
+ip route get 你的机器人IP
+```
+
+输出里的 `dev xxx` 就是组播网卡名。
 
 视频功能只读取相机画面，不会发送运动命令。它不使用 `unitree_webrtc_connect` 的 `conn.video`，而是使用和 `go2_l2_ros2_humble` 中 `go2_h264_repub` 相同的 H.264 组播管线。
 
@@ -146,7 +158,7 @@ gst-launch-1.0 udpsrc address=230.1.1.1 port=1720 multicast-iface=你的网卡�
   ! rtph264depay ! h264parse ! avdec_h264 ! videoconvert ! autovideosink
 ```
 
-如果页面提示无法打开视频，通常是网卡名不对，或者当前 OpenCV 不支持 GStreamer。
+如果页面提示无法打开视频，通常是自动识别不到网卡、手动网卡名不对，或者当前 OpenCV 不支持 GStreamer。
 
 ## 高度参数说明
 
@@ -195,7 +207,7 @@ KEYBOARD_AXIS_SCALE=0.55
 HEIGHT_STEP_M=0.01
 MIN_BODY_HEIGHT=-0.13
 MAX_BODY_HEIGHT=0.05
-VIDEO_MULTICAST_IFACE=eth0
+VIDEO_MULTICAST_IFACE=auto
 VIDEO_MULTICAST_ADDRESS=230.1.1.1
 VIDEO_MULTICAST_PORT=1720
 ```
