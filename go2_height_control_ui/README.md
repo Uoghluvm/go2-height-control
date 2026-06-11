@@ -13,14 +13,14 @@
 - 支持网页键盘遥控：`WASD` 为左摇杆，`IJKL` 为右摇杆，`Q/↑` 升高身体，`E/↓` 降低身体。
 - 支持在遥控区域用滑动条直接设置目标偏移。
 - 显示当前目标高度、反馈高度、速度、步态/模式和高度响应码。
-- 支持读取 Go2 H.264 UDP 组播视频流，在网页中显示相机画面。
+- 支持读取 Go2 WebRTC 视频流，在网页中显示相机画面。
 
 ## 适用范围
 
 这套界面默认针对：
 
 - Go2 固件：`1.1.4`
-- WebRTC IP：`192.168.12.2`
+- WebRTC IP：`192.168.12.137`
 - WebRTC 端口：`9991`
 - BodyHeight API：`1013`
 
@@ -28,15 +28,17 @@
 
 ## 启动界面
 
-如果需要使用视频流，先安装 GStreamer、带 GStreamer 支持的 OpenCV 和 `iproute2`：
+如果当前环境缺少 `cv2`，任选一种方式安装 OpenCV：
 
 ```bash
-sudo apt install -y iproute2 python3-opencv gstreamer1.0-tools gstreamer1.0-plugins-base \
-  gstreamer1.0-plugins-good gstreamer1.0-plugins-bad gstreamer1.0-plugins-ugly \
-  gstreamer1.0-libav
+python -m pip install opencv-python
 ```
 
-不要依赖 pip 的 `opencv-python` 来跑视频预览；它通常不带 GStreamer 支持。
+或：
+
+```bash
+sudo apt install -y python3-opencv
+```
 
 在仓库根目录运行：
 
@@ -65,7 +67,7 @@ GO2_UI_HOST=0.0.0.0 python go2_height_control_ui/backend.py
 2. 确认端口可用：
 
 ```bash
-nc -vz 192.168.12.2 9991
+nc -vz 192.168.12.137 9991
 ```
 
 3. 启动 Web 后端：
@@ -115,50 +117,34 @@ BodyHeight 响应码
 
 ## 视频流
 
-页面里的“视频流”区域用于读取 Go2 相机画面。点击“开启视频”后，后端会打开 Go2 H.264 UDP 组播流，解码后再编码为 MJPEG 给浏览器显示。
+页面里的“视频流”区域用于读取 Go2 相机画面。点击“开启视频”后，后端会使用 `unitree_webrtc_connect` 的 WebRTC video track 接收相机帧，解码后再编码为 MJPEG 给浏览器显示。
 
 ```text
-Go2 H264 RTP multicast 230.1.1.1:1720
--> GStreamer/OpenCV decode
--> Python backend JPEG/MJPEG
+Go2 WebRTC video track
+-> aiortc frame.to_ndarray(format="bgr24")
+-> OpenCV JPEG encode
+-> Python backend MJPEG
 -> browser img
-```
-
-使用前确认：
-
-```bash
-gst-launch-1.0 --version
 ```
 
 操作流程：
 
-1. 在网页里填写实际 Go2 IP。
-2. “视频组播网卡”默认保持 `auto`。后端会根据 Go2 IP 自动识别电脑连接 Go2 的网卡。
-3. 如果自动识别失败，再手动改成 `eth0`、`enp3s0`、`enx...` 这类真实网卡名。
-4. 保持默认组播地址 `230.1.1.1` 和端口 `1720`。
-5. 点击“开启视频”。
-6. 页面会显示画面、实际使用的网卡、分辨率、帧数和最近帧延迟。
-7. 不需要画面时点击“关闭视频”。
+1. 在网页里填写实际 Go2 IP，默认是 `192.168.12.137`。
+2. 点击“开启视频”。
+3. 页面会显示画面、来源、分辨率、帧数和最近帧延迟。
+4. 不需要画面时点击“关闭视频”。
 
-后端会先查本机 IPv4 地址段，优先选择和 Go2 IP 在同一子网的网卡；找不到同子网网卡时，再用路由结果兜底。可用下面命令查看路由兜底会返回的网卡：
+后端会先连接 Go2，马上注册 `conn.video.add_track_callback(...)`，再调用 `conn.video.switchVideoChannel(True)` 开启视频通道，避免“先开视频再注册 callback”的竞态。这和已验证成功的 Go2 WebRTC 视频逻辑一致。
 
-```bash
-ip route get 你的机器人IP
-```
-
-输出里的 `dev xxx` 就是组播网卡名。
-
-视频功能只读取相机画面，不会发送运动命令。它不使用 `unitree_webrtc_connect` 的 `conn.video`，而是使用和 `go2_l2_ros2_humble` 中 `go2_h264_repub` 相同的 H.264 组播管线。
-
-可单独测试管线：
+可单独测试上游示例：
 
 ```bash
-gst-launch-1.0 udpsrc address=230.1.1.1 port=1720 multicast-iface=你的网卡名 \
-  ! application/x-rtp,media=video,encoding-name=H264 \
-  ! rtph264depay ! h264parse ! avdec_h264 ! videoconvert ! autovideosink
+cd ~/unitree_webrtc_connect
+export UNITREE_ROBOT_IP=192.168.12.137
+python examples/go2/video/camera_stream/display_video_channel.py
 ```
 
-如果页面提示无法打开视频，通常是自动识别不到网卡、手动网卡名不对，或者当前 OpenCV 不支持 GStreamer。
+如果示例终端持续打印 `Shape: ...`，说明 WebRTC 视频帧正常到达。
 
 ## 高度参数说明
 
@@ -195,7 +181,7 @@ BodyHeight = -0.13
 后端默认参数如下：
 
 ```text
-UNITREE_ROBOT_IP=192.168.12.2
+UNITREE_ROBOT_IP=192.168.12.137
 LOW_BODY_HEIGHT=-0.13
 NORMAL_BODY_HEIGHT=0.0
 CRAWL_DISTANCE_M=2.0
@@ -207,9 +193,6 @@ KEYBOARD_AXIS_SCALE=0.55
 HEIGHT_STEP_M=0.01
 MIN_BODY_HEIGHT=-0.13
 MAX_BODY_HEIGHT=0.05
-VIDEO_MULTICAST_IFACE=auto
-VIDEO_MULTICAST_ADDRESS=230.1.1.1
-VIDEO_MULTICAST_PORT=1720
 ```
 
 键盘调高度时，如果目标偏移已经到达 `MIN_BODY_HEIGHT` 或 `MAX_BODY_HEIGHT`，后端不会继续越界发送高度目标，页面会提示“不能再下降”或“不能再升高”。

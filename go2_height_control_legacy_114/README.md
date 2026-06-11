@@ -5,7 +5,7 @@
 默认参数：
 
 ```text
-机器人 IP: 192.168.12.2
+机器人 IP: 192.168.12.137
 最低偏移: -0.13 m
 恢复高度: 0.00 m
 前进距离: 2.0 m
@@ -50,13 +50,13 @@ cd ~/unitree_webrtc_connect
 确认机器人网络：
 
 ```bash
-nc -vz 192.168.12.2 9991
+nc -vz 192.168.12.137 9991
 ```
 
 看到类似下面输出表示 WebRTC 信令端口可用：
 
 ```text
-Connection to 192.168.12.2 9991 port [tcp/*] succeeded!
+Connection to 192.168.12.137 9991 port [tcp/*] succeeded!
 ```
 
 如果 IP 不同，可临时覆盖：
@@ -78,7 +78,7 @@ source go2_height_control_legacy_114/config.env
 常用参数：
 
 ```bash
-export UNITREE_ROBOT_IP=192.168.12.2
+export UNITREE_ROBOT_IP=192.168.12.137
 export LOW_BODY_HEIGHT=-0.13
 export NORMAL_BODY_HEIGHT=0.0
 export CRAWL_DISTANCE_M=2.0

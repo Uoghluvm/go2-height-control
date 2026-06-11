@@ -1,6 +1,5 @@
 #!/usr/bin/env python3
 import asyncio
-import ipaddress
 import json
 import os
 import signal
@@ -25,7 +24,7 @@ HOST = os.environ.get("GO2_UI_HOST", "127.0.0.1")
 PORT = int(os.environ.get("GO2_UI_PORT", "8765"))
 
 DEFAULT_PARAMS = {
-    "UNITREE_ROBOT_IP": "192.168.12.2",
+    "UNITREE_ROBOT_IP": "192.168.12.137",
     "LOW_BODY_HEIGHT": "-0.13",
     "NORMAL_BODY_HEIGHT": "0.0",
     "CRAWL_DISTANCE_M": "2.0",
@@ -37,9 +36,6 @@ DEFAULT_PARAMS = {
     "HEIGHT_STEP_M": "0.01",
     "MIN_BODY_HEIGHT": "-0.13",
     "MAX_BODY_HEIGHT": "0.05",
-    "VIDEO_MULTICAST_IFACE": "auto",
-    "VIDEO_MULTICAST_ADDRESS": "230.1.1.1",
-    "VIDEO_MULTICAST_PORT": "1720",
 }
 
 TASKS = {
@@ -203,56 +199,6 @@ def parse_json_data(raw):
         return json.loads(raw)
     except Exception:
         return None
-
-
-def detect_route_iface(target_ip):
-    try:
-        target = ipaddress.ip_address(target_ip)
-    except ValueError:
-        return None
-
-    try:
-        result = subprocess.run(
-            ["ip", "-j", "-4", "addr", "show"],
-            check=True,
-            capture_output=True,
-            text=True,
-            timeout=2,
-        )
-        links = json.loads(result.stdout)
-        for link in links:
-            ifname = link.get("ifname")
-            if not ifname or ifname == "lo":
-                continue
-            for info in link.get("addr_info", []):
-                local = info.get("local")
-                prefixlen = info.get("prefixlen")
-                if not local or prefixlen is None:
-                    continue
-                network = ipaddress.ip_network(f"{local}/{prefixlen}", strict=False)
-                if target in network:
-                    return ifname
-    except Exception:
-        pass
-
-    try:
-        result = subprocess.run(
-            ["ip", "route", "get", target_ip],
-            check=True,
-            capture_output=True,
-            text=True,
-            timeout=2,
-        )
-    except Exception:
-        return None
-
-    parts = result.stdout.split()
-    if "dev" not in parts:
-        return None
-    index = parts.index("dev")
-    if index + 1 >= len(parts):
-        return None
-    return parts[index + 1]
 
 
 async def get_motion_mode(conn):
@@ -743,7 +689,8 @@ class VideoStreamManager:
         self.lock = threading.Lock()
         self.condition = threading.Condition(self.lock)
         self.thread = None
-        self.capture = None
+        self.loop = None
+        self.conn = None
         self.running = False
         self.connected = False
         self.stop_flag = False
@@ -754,7 +701,7 @@ class VideoStreamManager:
         self.width = None
         self.height = None
         self.latest_jpeg = None
-        self.iface = None
+        self.source = "WebRTC"
         self.params = DEFAULT_PARAMS.copy()
 
     def snapshot(self):
@@ -772,7 +719,7 @@ class VideoStreamManager:
                 "frame_count": self.frame_count,
                 "width": self.width,
                 "height": self.height,
-                "iface": self.iface,
+                "source": self.source,
             }
 
     def start(self, params):
@@ -790,17 +737,24 @@ class VideoStreamManager:
             self.width = None
             self.height = None
             self.latest_jpeg = None
-            self.iface = None
+            self.source = "WebRTC"
 
-        self.task_manager.append_log("启动 Go2 视频流")
+        self.task_manager.append_log("启动 Go2 WebRTC 视频流")
         self.thread = threading.Thread(target=self._thread_main, daemon=True)
         self.thread.start()
 
     def stop(self):
         with self.lock:
             self.stop_flag = True
+            loop = self.loop
+            conn = self.conn
             self.condition.notify_all()
-        self.task_manager.append_log("请求停止 Go2 视频流")
+        if loop and conn:
+            try:
+                asyncio.run_coroutine_threadsafe(conn.disconnect(), loop)
+            except Exception:
+                pass
+        self.task_manager.append_log("请求停止 Go2 WebRTC 视频流")
 
     def get_latest_jpeg(self, timeout=2.0, after_frame_at=None):
         deadline = time.time() + timeout
@@ -817,7 +771,7 @@ class VideoStreamManager:
 
     def _thread_main(self):
         try:
-            self._run()
+            asyncio.run(self._run())
         except Exception as exc:
             with self.condition:
                 self.error = str(exc)
@@ -827,76 +781,69 @@ class VideoStreamManager:
             with self.condition:
                 self.running = False
                 self.connected = False
-                self.capture = None
+                self.conn = None
+                self.loop = None
                 self.condition.notify_all()
             self.task_manager.append_log("视频流已停止")
 
-    def _run(self):
+    async def _run(self):
         try:
             import cv2
         except ImportError as exc:
-            raise RuntimeError("缺少 OpenCV，请安装支持 GStreamer 的 python3-opencv") from exc
+            raise RuntimeError("缺少 OpenCV，请安装 opencv-python 或 python3-opencv") from exc
 
         with self.lock:
             robot_ip = self.params["UNITREE_ROBOT_IP"].strip()
-            configured_iface = self.params["VIDEO_MULTICAST_IFACE"].strip()
-            iface = configured_iface
-            if not iface or iface.lower() == "auto":
-                iface = detect_route_iface(robot_ip)
-                if not iface:
-                    raise RuntimeError(
-                        f"无法根据 Go2 IP {robot_ip} 自动识别视频组播网卡，"
-                        "请手动填写视频组播网卡"
-                    )
-            address = self.params["VIDEO_MULTICAST_ADDRESS"].strip() or "230.1.1.1"
-            port = int(float(self.params["VIDEO_MULTICAST_PORT"]))
-            self.iface = iface
+            self.loop = asyncio.get_running_loop()
 
-        pipeline = (
-            f"udpsrc address={address} port={port} multicast-iface={iface} "
-            "! application/x-rtp, media=video, encoding-name=H264 "
-            "! rtph264depay ! h264parse ! avdec_h264 ! videoconvert "
-            "! video/x-raw,width=1280,height=720,format=BGR ! appsink drop=1 sync=false"
-        )
-        self.task_manager.append_log(f"视频流打开 H264 组播: {address}:{port} iface={iface}")
-
-        capture = cv2.VideoCapture(pipeline, cv2.CAP_GSTREAMER)
+        conn = UnitreeWebRTCConnection(WebRTCConnectionMethod.LocalSTA, ip=robot_ip)
         with self.lock:
-            self.capture = capture
+            self.conn = conn
+        self.task_manager.append_log(f"视频流连接 Go2 WebRTC: {robot_ip}")
 
-        if not capture.isOpened():
-            raise RuntimeError(
-                "无法打开 Go2 H264 组播视频。请确认网卡名正确、Go2 视频组播可达，"
-                "并且当前 OpenCV 支持 GStreamer。"
-            )
-
-        try:
-            with self.condition:
-                self.connected = True
-                self.condition.notify_all()
-
+        async def recv_camera_stream(track):
             while True:
                 with self.lock:
                     if self.stop_flag:
                         break
-                ok, image = capture.read()
-                if not ok:
-                    time.sleep(0.02)
-                    continue
+                frame = await track.recv()
+                image = frame.to_ndarray(format="bgr24")
                 ok, encoded = cv2.imencode(".jpg", image, [int(cv2.IMWRITE_JPEG_QUALITY), 82])
                 if not ok:
                     continue
-                jpeg = encoded.tobytes()
                 height, width = image.shape[:2]
                 with self.condition:
-                    self.latest_jpeg = jpeg
+                    self.latest_jpeg = encoded.tobytes()
                     self.width = int(width)
                     self.height = int(height)
                     self.frame_count += 1
                     self.last_frame_at = time.time()
                     self.condition.notify_all()
+
+        await conn.connect()
+        try:
+            # Register before enabling video so the first frames are not missed.
+            conn.video.add_track_callback(recv_camera_stream)
+            with self.condition:
+                self.connected = True
+                self.condition.notify_all()
+            conn.video.switchVideoChannel(True)
+            self.task_manager.append_log("WebRTC 视频通道已开启")
+
+            while True:
+                with self.lock:
+                    if self.stop_flag:
+                        break
+                await asyncio.sleep(0.1)
         finally:
-            capture.release()
+            try:
+                conn.video.switchVideoChannel(False)
+            except Exception:
+                pass
+            try:
+                await conn.disconnect()
+            except Exception:
+                pass
 
 
 video_stream = VideoStreamManager(manager)

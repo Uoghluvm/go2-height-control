@@ -9,7 +9,7 @@ from unitree_webrtc_connect.constants import RTC_TOPIC, SPORT_CMD
 
 logging.basicConfig(level=logging.FATAL)
 
-ROBOT_IP = os.environ.get("UNITREE_ROBOT_IP", "192.168.12.2")
+ROBOT_IP = os.environ.get("UNITREE_ROBOT_IP", "192.168.12.137")
 LOW_BODY_HEIGHT = float(os.environ.get("LOW_BODY_HEIGHT", "-0.13"))
 NORMAL_BODY_HEIGHT = float(os.environ.get("NORMAL_BODY_HEIGHT", "0.0"))
 CRAWL_DISTANCE_M = float(os.environ.get("CRAWL_DISTANCE_M", "2.0"))
