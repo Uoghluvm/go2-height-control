@@ -701,6 +701,12 @@ class VideoStreamManager:
 
         conn = UnitreeWebRTCConnection(WebRTCConnectionMethod.LocalSTA, ip=ip)
         self.conn = conn
+        if not hasattr(conn, "video"):
+            raise RuntimeError(
+                "当前 Python 环境安装的 unitree_webrtc_connect 不支持 video channel。"
+                "请更新上游依赖：cd ~/unitree_webrtc_connect && git pull && "
+                "python -m pip install -e ."
+            )
         conn.video.add_track_callback(recv_camera_stream)
         self.task_manager.append_log(f"视频流连接 Go2: {ip}")
         await conn.connect()

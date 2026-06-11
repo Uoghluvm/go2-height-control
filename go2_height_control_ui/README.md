@@ -132,6 +132,21 @@ python -m pip install -r requirements.txt
 
 视频功能只读取相机画面，不会发送运动命令。如果页面提示缺少 `opencv-python`，或一直没有画面，先确认上游 `unitree_webrtc_connect` 的 Go2 video 示例能在同一 Python 环境下正常运行。
 
+如果报错：
+
+```text
+UnitreeWebRTCConnection object has no attribute 'video'
+```
+
+说明当前 Python 环境安装的是旧版 `unitree_webrtc_connect`。更新上游仓库并重新安装：
+
+```bash
+source ~/go2-webrtc-venv/bin/activate
+cd ~/unitree_webrtc_connect
+git pull
+python -m pip install -e .
+```
+
 ## 高度参数说明
 
 界面里的可输入高度不是官方文档里 `0.15-0.36m` 那种“机身绝对高度”。
