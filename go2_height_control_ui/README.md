@@ -147,6 +147,25 @@ git pull
 python -m pip install -e .
 ```
 
+然后检查当前环境是否包含 video channel 支持：
+
+```bash
+python - <<'PY'
+import inspect
+import unitree_webrtc_connect.webrtc_driver as driver
+from unitree_webrtc_connect.webrtc_video import WebRTCVideoChannel
+print("WebRTCVideoChannel OK")
+print("driver creates video:", "self.video = WebRTCVideoChannel" in inspect.getsource(driver.UnitreeWebRTCConnection))
+PY
+```
+
+正常应看到：
+
+```text
+WebRTCVideoChannel OK
+driver creates video: True
+```
+
 ## 高度参数说明
 
 界面里的可输入高度不是官方文档里 `0.15-0.36m` 那种“机身绝对高度”。

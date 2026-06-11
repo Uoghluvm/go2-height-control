@@ -95,21 +95,23 @@ git pull
 python -m pip install -e .
 ```
 
-再确认当前 Python 环境里连接对象支持 video channel：
+再确认当前 Python 环境里包含 video channel 支持：
 
 ```bash
 python - <<'PY'
-from unitree_webrtc_connect.webrtc_driver import UnitreeWebRTCConnection
-from unitree_webrtc_connect.constants import WebRTCConnectionMethod
-conn = UnitreeWebRTCConnection(WebRTCConnectionMethod.LocalSTA, ip="192.168.12.2")
-print("has video:", hasattr(conn, "video"))
+import inspect
+import unitree_webrtc_connect.webrtc_driver as driver
+from unitree_webrtc_connect.webrtc_video import WebRTCVideoChannel
+print("WebRTCVideoChannel OK")
+print("driver creates video:", "self.video = WebRTCVideoChannel" in inspect.getsource(driver.UnitreeWebRTCConnection))
 PY
 ```
 
 正常应输出：
 
 ```text
-has video: True
+WebRTCVideoChannel OK
+driver creates video: True
 ```
 
 ## 安装本功能包
@@ -408,7 +410,7 @@ python -m pip install -r requirements.txt
 
 - 是否点击了“开启视频”。
 - `UNITREE_ROBOT_IP` 是否正确。
-- 当前 Python 环境里的 `UnitreeWebRTCConnection` 是否有 `video` 属性；没有就更新 `~/unitree_webrtc_connect` 并重新 `pip install -e .`。
+- 当前 Python 环境里的 `unitree_webrtc_connect.webrtc_video` 是否存在，且 `webrtc_driver.py` 是否创建 `self.video`；没有就更新 `~/unitree_webrtc_connect` 并重新 `pip install -e .`。
 - `unitree_webrtc_connect` 的 Go2 video 示例在同一环境下是否能收到画面。
 - 网络是否稳定；视频比普通 Sport API 更依赖带宽和丢包情况。
 
